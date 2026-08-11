@@ -19,7 +19,6 @@ items_list = [
 ]
 plt_list = [300, 210, 210, 320, 2520, 960, 640, 640, 640, 320, 320, 320, 160]
 
-# MOQ 사전 (주력 101~103은 0으로 설정하여 로직상 구분)
 moq_dict = {
     "101": 0, "102": 0, "103": 0,
     "스타 1호": 7560, "스타 2호": 4800, "스타 3호": 3840, "스타 4호": 3200,
@@ -36,14 +35,15 @@ col_a, col_b, col_c, save_col = st.columns([2, 2, 2, 1])
 with col_a:
     base_date = st.date_input("발주 기준일", value=datetime.now().date())
 with col_b:
-    target_delivery_date = st.date_input("납품 예정일", value=base_date + timedelta(days=3))
+    target_delivery_date = st.date_input("납품 예정일", value=base_date + timedelta(days=1))
 with col_c:
     auto_order_threshold = st.number_input("MOQ 자동 발주 임계값 (%)", min_value=0, max_value=100, value=80, step=5)
     st.caption("MOQ 품목이 필요량 N% 이상일 때 자동 발주")
 
+# 리드타임 로직: 당일 포함을 위해 +1 적용
 base_today = datetime.combine(base_date, datetime.min.time())
 days_diff = (target_delivery_date - base_date).days
-days_multiplier = max(1, days_diff)
+days_multiplier = max(1, days_diff + 1) # 당일 포함 2일 확보
 
 yesterday = base_today - timedelta(days=1)
 recent_dates = [(yesterday - timedelta(days=i)).strftime('%m/%d') for i in range(9, -1, -1)]
@@ -64,7 +64,7 @@ with save_col:
             df_to_save.to_json(SAVE_FILE)
             st.success("✅ 저장 완료!")
 
-st.info(f"💡 **발주 기준일:** {base_date.strftime('%Y-%m-%d')} | **납품 예정일:** {target_delivery_date.strftime('%Y-%m-%d')} (리드타임 배수: **X {days_multiplier}일**)")
+st.info(f"💡 **발주 기준일:** {base_date.strftime('%Y-%m-%d')} | **납품 예정일:** {target_delivery_date.strftime('%Y-%m-%d')} | **재고 확보일수:** {days_multiplier}일 (당일 포함)")
 
 # --- [데이터 영구 저장 및 불러오기 로직] ---
 if os.path.exists(SAVE_FILE) and "loaded" not in st.session_state:
