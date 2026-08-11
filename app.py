@@ -23,7 +23,7 @@ st.write(f"오늘 날짜: {today.strftime('%Y-%m-%d')} (사용량 자동 집계:
 # 품목 리스트 및 기본 입수 정보 (입수 = 1 PLT 당 박스 수)
 items_list = [
     "101", "102", "103", 
-    "스타 13호(양곡20kg)", "스타 1호", "스타 2号" if False else "스타 2호", 
+    "스타 13호(양곡20kg)", "스타 1호", "스타 2호", 
     "스타 3호", "스타 4호", "스타 5호", 
     "스타 6호", "스타 7호", "스타 8호", "스타 11호"
 ]
@@ -43,7 +43,7 @@ if os.path.exists(SAVE_FILE) and "loaded" not in st.session_state:
         pass
 
 
-# --- [세션 상태 유지 및 데이터 동기화 로직 (구조 충돌 방지)] ---
+# --- [세션 상태 유지 및 데이터 동기화 로직] ---
 
 if "recent_10days_df" not in st.session_state:
     initial_data = {"구분2": items_list}
@@ -75,7 +75,6 @@ else:
             new_sched_df[f_date] = [0] * len(items_list)
     st.session_state.schedule_df = new_sched_df
 
-# 재고 입력 상태 관리 (컬럼명 키오류 원천 차단 및 초기화)
 if "stock_input_df" not in st.session_state or "전일마감재고" not in st.session_state.stock_input_df.columns:
     st.session_state.stock_input_df = pd.DataFrame({
         "구분2": items_list,
@@ -196,14 +195,17 @@ st.session_state.stock_input_df["당일입고예정량"] = edited_stock["당일�
 
 # --- [파트 4] 최적 발주 필요량 계산 및 결과 출력 ---
 st.markdown("---")
-st.subheader("🚀 4. 당일 최적 발주 필요량 결과 (소계 및 잔여재고 산정)")
+st.subheader("🚀 4. 당일 최적 발주 필요량 결과 (소계, 안전재고비율 산정)")
 
 def calculate_row_data(row):
     avg_use = float(row["평균사용량"]) if pd.notnull(row["평균사용량"]) else 0.0
     prev_stock = float(row["전일마감재고"]) if pd.notnull(row["전일마감재고"]) else 0.0
     incoming = float(row["당일입고예정량"]) if pd.notnull(row["당일입고예정량"]) else 0.0
 
+    # 당일 기초재고 = 전일 마감재고 + 당일 입고예정량
     base_stock = prev_stock + incoming
+
+    # 소계(예상 잔여재고) = 당일 기초재고 - (평균사용량 × 리드타임)
     expected_usage = avg_use * days_multiplier
     subtotal_stock = base_stock - expected_usage
     
@@ -211,6 +213,13 @@ def calculate_row_data(row):
         subtotal_stock = 0.0
     
     safety_stock = expected_usage
+    
+    # 안전재고비율 (%) = (소계 / 안전재고) * 100 (안전재고가 0인 경우 0 처리)
+    if safety_stock > 0:
+        safety_ratio = (subtotal_stock / safety_stock) * 100
+    else:
+        safety_ratio = 0.0
+
     needed_qty = safety_stock - subtotal_stock
     
     if needed_qty <= 0:
@@ -218,13 +227,13 @@ def calculate_row_data(row):
     else:
         order_box = float(math.ceil(needed_qty))
         
-    return pd.Series([base_stock, subtotal_stock, safety_stock, order_box])
+    return pd.Series([base_stock, subtotal_stock, safety_stock, safety_ratio, order_box])
 
 result_df = edited_stock.copy()
-result_df[["당일기초재고", "미발주_소계", "안전재고", "발주필요량(BOX)"]] = result_df.apply(calculate_row_data, axis=1)
+result_df[["당일기초재고", "미발주_소계", "안전재고", "안전재고비율", "발주필요량(BOX)"]] = result_df.apply(calculate_row_data, axis=1)
 
 st.dataframe(
-    result_df[["구분2", "입수(BOX)", "평균사용량", "전일마감재고", "당일입고예정량", "당일기초재고", "미발주_소계", "안전재고", "발주필요량(BOX)"]].fillna(0),
+    result_df[["구분2", "입수(BOX)", "평균사용량", "전일마감재고", "당일입고예정량", "당일기초재고", "미발주_소계", "안전재고", "안전재고비율", "발주필요량(BOX)"]].fillna(0),
     column_config={
         "구분2": st.column_config.TextColumn("품목", disabled=True),
         "입수(BOX)": st.column_config.NumberColumn("입수(BOX)", format="%d", disabled=True),
@@ -234,6 +243,7 @@ st.dataframe(
         "당일기초재고": st.column_config.NumberColumn("당일기초재고", format="%.1f", disabled=True),
         "미발주_소계": st.column_config.NumberColumn("소계 (예상잔여재고)", format="%.1f", disabled=True),
         "안전재고": st.column_config.NumberColumn("안전재고", format="%.1f", disabled=True),
+        "안전재고비율": st.column_config.NumberColumn("안전재고비율", format="%.1f%%"),
         "발주필요량(BOX)": st.column_config.NumberColumn("발주필요량(BOX)", format="%d", disabled=True),
     },
     hide_index=True,
