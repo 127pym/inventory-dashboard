@@ -2,10 +2,14 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import math
+import os
 
 st.set_page_config(layout="wide", page_title="물류 자동화 대시보드")
 
 st.title("📦 물류 재고 및 발주 자동화 대시보드")
+
+# 데이터 저장용 파일 경로
+SAVE_FILE = "inventory_data.json"
 
 # 1. 오늘 날짜 기준으로 날짜 리스트 자동 갱신 설정
 today = datetime.now()
@@ -26,12 +30,38 @@ items_list = [
 ]
 plt_list = [300, 210, 210, 320, 2520, 960, 640, 640, 640, 320, 320, 320, 160]
 
+# --- [데이터 영구 저장 및 불러오기 기능] ---
+st.sidebar.header("💾 데이터 관리")
+if st.sidebar.button("💾 현재 입력 데이터 저장"):
+    if "recent_10days_df" in st.session_state and "schedule_df" in st.session_state and "stock_input_df" in st.session_state:
+        save_dict = {
+            "recent_10days": st.session_state.recent_10days_df.to_dict(),
+            "schedule": st.session_state.schedule_df.to_dict(),
+            "stock_input": st.session_state.stock_input_df.to_dict()
+        }
+        df_to_save = pd.DataFrame([save_dict])
+        df_to_save.to_json(SAVE_FILE)
+        st.sidebar.success("✅ 데이터가 성공적으로 저장되었습니다!")
+
+# 파일이 존재하면 불러와서 세션에 반영
+if os.path.exists(SAVE_FILE) and "loaded" not in st.session_state:
+    try:
+        loaded_df = pd.read_json(SAVE_FILE)
+        loaded_dict = loaded_df.iloc[0].to_dict()
+        st.session_state.recent_10days_df = pd.DataFrame(loaded_dict["recent_10days"])
+        st.session_state.schedule_df = pd.DataFrame(loaded_dict["schedule"])
+        st.session_state.stock_input_df = pd.DataFrame(loaded_dict["stock_input"])
+        st.session_state.loaded = True
+    except Exception as e:
+        pass
+
+
 # --- [세션 상태 유지 및 데이터 동기화 로직] ---
 
 if "recent_10days_df" not in st.session_state:
     initial_data = {"구분2": items_list}
     for d_str in recent_dates:
-        initial_data[d_str] = [100] * len(items_list) 
+        initial_data[d_str] = [0] * len(items_list) 
     st.session_state.recent_10days_df = pd.DataFrame(initial_data)
 else:
     df_old = st.session_state.recent_10days_df
@@ -40,7 +70,7 @@ else:
         if d_str in df_old.columns:
             new_df[d_str] = df_old[d_str]
         else:
-            new_df[d_str] = [100] * len(items_list)
+            new_df[d_str] = [0] * len(items_list)
     st.session_state.recent_10days_df = new_df
 
 if "schedule_df" not in st.session_state:
@@ -61,7 +91,7 @@ else:
 if "stock_input_df" not in st.session_state:
     st.session_state.stock_input_df = pd.DataFrame({
         "구분2": items_list,
-        "현재고량": [13200, 17430, 19320, 160, 3760, 3640, 5760, 4160, 8320, 5280, 2240, 960, 320]
+        "현재고량": [0] * len(items_list)
     })
 
 
@@ -101,7 +131,6 @@ edited_10days = st.data_editor(
     height=420,
     key="editor_10days"
 )
-# 복붙 시 None이나 빈칸이 생기면 0으로 자동 변환
 st.session_state.recent_10days_df = edited_10days.fillna(0)
 
 days_columns = [col for col in edited_10days.columns if col != "구분2"]
@@ -125,7 +154,6 @@ edited_schedule = st.data_editor(
     height=420,
     key="editor_schedule"
 )
-# 복붙 시 None이나 빈칸이 생기면 0으로 자동 변환
 st.session_state.schedule_df = edited_schedule.fillna(0)
 
 today_str_md = today.strftime('%m/%d')
@@ -163,7 +191,6 @@ edited_stock = st.data_editor(
     key="editor_stock"
 )
 
-# 복붙 시 None이나 빈칸이 생기면 0으로 자동 변환
 st.session_state.stock_input_df["현재고량"] = edited_stock["현재고량"].fillna(0)
 
 
@@ -205,3 +232,4 @@ st.dataframe(
     hide_index=True,
     use_container_width=True
 )
+
