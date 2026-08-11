@@ -7,15 +7,15 @@ st.set_page_config(layout="wide", page_title="물류 자동화 대시보드")
 
 st.title("📦 물류 재고 및 발주 자동화 대시보드")
 
+# 1. 오늘 날짜 기준으로 날짜 리스트 자동 갱신 설정
 today = datetime.now()
 yesterday = today - timedelta(days=1)
 recent_dates = [(yesterday - timedelta(days=i)).strftime('%m/%d') for i in range(9, -1, -1)]
 
-# 스케줄 표의 날짜를 YYYY-MM-DD와 MM/D 형태로 모두 대응할 수 있도록 넉넉히 생성
 future_dates_obj = [today + timedelta(days=i) for i in range(7)]
 future_dates_md = [d.strftime('%m/%d') for d in future_dates_obj]
 
-st.write(f"오늘 날짜: {today.strftime('%Y-%m-%d')} (사용량 기본 집계: {recent_dates[0]} ~ {recent_dates[-1]})")
+st.write(f"오늘 날짜: {today.strftime('%Y-%m-%d')} (사용량 자동 집계: {recent_dates[0]} ~ {recent_dates[-1]})")
 
 # 품목 리스트 및 기본 입수 정보
 items_list = [
@@ -26,21 +26,44 @@ items_list = [
 ]
 plt_list = [300, 210, 210, 320, 2520, 960, 640, 640, 640, 320, 320, 320, 160]
 
-# 1. 세션 상태 초기화 (최근 10일 사용량 키인 표)
+# --- [세션 상태 유지 및 날짜 자동 갱신 로직] ---
+
+# 1. 최근 10일 사용량 키인 표 데이터 유지 및 날짜 자동 갱신
+current_10days_cols = ["구분2"] + recent_dates
 if "recent_10days_df" not in st.session_state:
     initial_data = {"구분2": items_list}
     for d_str in recent_dates:
         initial_data[d_str] = [100] * len(items_list) 
     st.session_state.recent_10days_df = pd.DataFrame(initial_data)
+else:
+    # 날짜가 바뀌었을 때 기존 키인 데이터를 새 날짜 컬럼에 최대한 보존하고 나머지는 유지
+    df_old = st.session_state.recent_10days_df
+    new_df = pd.DataFrame({"구분2": items_list})
+    for d_str in recent_dates:
+        if d_str in df_old.columns:
+            new_df[d_str] = df_old[d_str]
+        else:
+            new_df[d_str] = [100] * len(items_list)
+    st.session_state.recent_10days_df = new_df
 
-# 2. 세션 상태 초기화 (향후 확정 입고 예정 스케줄 표 - MM/D 기준으로 깔끔하게 고정)
+# 2. 향후 확정 입고 예정 스케줄 표 데이터 유지 및 날짜 자동 갱신
+current_sched_cols = ["구분2"] + future_dates_md
 if "schedule_df" not in st.session_state:
     sched_data = {"구분2": items_list}
     for f_date in future_dates_md:
         sched_data[f_date] = [0] * len(items_list)
     st.session_state.schedule_df = pd.DataFrame(sched_data)
+else:
+    df_sched_old = st.session_state.schedule_df
+    new_sched_df = pd.DataFrame({"구분2": items_list})
+    for f_date in future_dates_md:
+        if f_date in df_sched_old.columns:
+            new_sched_df[f_date] = df_sched_old[f_date]
+        else:
+            new_sched_df[f_date] = [0] * len(items_list)
+    st.session_state.schedule_df = new_sched_df
 
-# 3. 세션 상태 초기화 (당일 재고 키인 표)
+# 3. 당일 재고 키인 표 데이터 유지
 if "stock_input_df" not in st.session_state:
     st.session_state.stock_input_df = pd.DataFrame({
         "구분2": items_list,
@@ -59,7 +82,7 @@ with st.form("date_form"):
 
 try:
     target_date = datetime.strptime(target_delivery_date_str.strip(), "%Y-%m-%d")
-    target_date_str_md = target_date.strftime('%m/%d') # 스케줄 표 컬럼과 맞춤 (예: 08/11)
+    target_date_str_md = target_date.strftime('%m/%d') 
     days_diff = (target_date.date() - today.date()).days
     days_multiplier = max(1, days_diff)
 except ValueError:
@@ -72,7 +95,7 @@ st.info(f"💡 설정된 납품일: **{target_delivery_date_str}** (안전재고
 # --- [파트 1] 최근 10일 사용량 키인 ---
 st.markdown("---")
 st.subheader("📝 1. 최근 10일 사용량 키인")
-st.info(f"어제({recent_dates[-1]})까지의 일자별 실적 입력")
+st.info(f"어제({recent_dates[-1]})까지의 일자별 실적 입력 (날짜 자동 갱신 및 데이터 유지)")
 
 col_config_10days = {"구분2": st.column_config.TextColumn("품목", disabled=True)}
 for d_str in recent_dates:
@@ -95,7 +118,7 @@ calculated_avg = edited_10days[days_columns].mean(axis=1)
 # --- [파트 2] 향후 확정 입고 예정 스케줄 관리 ---
 st.markdown("---")
 st.subheader("📅 2. 향후 확정 입고 예정 스케줄 관리")
-st.info("이미 발주가 확정되어 입고될 날짜별 수량을 입력하세요.")
+st.info("이미 발주가 확정되어 입고될 날짜별 수량을 입력하세요. (날짜 자동 갱신 및 데이터 유지)")
 
 col_config_sched = {"구분2": st.column_config.TextColumn("품목", disabled=True)}
 for f_date in future_dates_md:
@@ -111,7 +134,6 @@ edited_schedule = st.data_editor(
 )
 st.session_state.schedule_df = edited_schedule
 
-# 스케줄 표에서 선택한 날짜에 해당하는 입고량 안전하게 추출 (None 방지)
 if target_date_str_md in edited_schedule.columns:
     specific_incoming = edited_schedule[target_date_str_md].fillna(0)
 else:
