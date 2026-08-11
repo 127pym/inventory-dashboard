@@ -19,8 +19,23 @@ items_list = [
 ]
 plt_list = [300, 210, 210, 320, 2520, 960, 640, 640, 640, 320, 320, 320, 160]
 
+# 품목별 MOQ 수량 매핑 (보내주신 이미지 기준)
+moq_dict = {
+    "스타 1호": 7560,
+    "스타 2호": 4800,
+    "스타 3호": 3840,
+    "스타 4호": 3200,
+    "스타 5호": 3200,
+    "스타 6호": 1600,
+    "스타 7호": 1600,
+    "스타 8호": 1600,
+    "스타 10호": 2400,
+    "스타 11호": 1280,
+    "스타 13호(양곡20kg)": 1920
+}
 
-# --- [최상단 배치: 날짜 설정 (표 1, 2 날짜 컬럼 자동 연동의 기준)] ---
+
+# --- [최상단 배치: 날짜 설정] ---
 st.markdown("---")
 st.subheader("🎯 1. 기준일 및 납품 예정일 설정")
 
@@ -32,16 +47,13 @@ with date_col1:
 with date_col2:
     target_delivery_date = st.date_input("납품(도착) 예정일", value=base_date + timedelta(days=3))
 
-# 날짜 객체 변환 및 차이 계산
 base_today = datetime.combine(base_date, datetime.min.time())
 days_diff = (target_delivery_date - base_date).days
 days_multiplier = max(1, days_diff)
 
-# [핵심] 상단 날짜 변경 시 표 1 (최근 10일) 날짜 컬럼 자동 생성
 yesterday = base_today - timedelta(days=1)
 recent_dates = [(yesterday - timedelta(days=i)).strftime('%m/%d') for i in range(9, -1, -1)]
 
-# [핵심] 상단 날짜 변경 시 표 2 (향후 입고 스케줄) 날짜 컬럼 자동 생성
 future_dates_obj = [base_today + timedelta(days=i) for i in range(max(7, days_multiplier + 1))]
 future_dates_md = [d.strftime('%m/%d') for d in future_dates_obj]
 
@@ -76,9 +88,8 @@ if os.path.exists(SAVE_FILE) and "loaded" not in st.session_state:
         pass
 
 
-# --- [세션 상태 유지 및 상단 변경 날짜와 컬럼 동기화 로직] ---
+# --- [세션 상태 유지 및 동기화 로직] ---
 
-# 1. 표 1 컬럼을 상단 기준일의 최근 10일 날짜로 동기화
 if "recent_10days_df" not in st.session_state:
     initial_data = {"구분2": items_list}
     for d_str in recent_dates:
@@ -94,7 +105,6 @@ else:
             new_df[d_str] = [0] * len(items_list)
     st.session_state.recent_10days_df = new_df
 
-# 2. 표 2 컬럼을 상단 기준일의 향후 스케줄 날짜로 동기화
 if "schedule_df" not in st.session_state:
     sched_data = {"구분2": items_list}
     for f_date in future_dates_md:
@@ -110,7 +120,6 @@ else:
             new_sched_df[f_date] = [0] * len(items_list)
     st.session_state.schedule_df = new_sched_df
 
-# 3. 표 3 재고 및 입고예정 입력 상태 관리
 if "stock_input_df" not in st.session_state or "전일마감재고" not in st.session_state.stock_input_df.columns:
     st.session_state.stock_input_df = pd.DataFrame({
         "구분2": items_list,
@@ -119,7 +128,7 @@ if "stock_input_df" not in st.session_state or "전일마감재고" not in st.se
     })
 
 
-# --- [파트 1] 최근 10일 사용량 키인 (상단 날짜에 맞춰 컬럼 자동 변환) ---
+# --- [파트 1] 최근 10일 사용량 키인 ---
 st.markdown("---")
 st.subheader("📝 2. 최근 10일 사용량 키인")
 st.info(f"기준일 전날({recent_dates[-1]})까지의 일자별 실적 입력")
@@ -142,7 +151,7 @@ days_columns = [col for col in edited_10days.columns if col != "구분2"]
 calculated_avg = edited_10days[days_columns].fillna(0).mean(axis=1)
 
 
-# --- [파트 2] 향후 확정 입고 예정 스케줄 관리 (상단 날짜에 맞춰 컬럼 자동 변환) ---
+# --- [파트 2] 향후 확정 입고 예정 스케줄 관리 ---
 st.markdown("---")
 st.subheader("📅 3. 향후 확정 입고 예정 스케줄 관리")
 st.info("이미 발주가 확정되어 입고될 날짜별 수량을 입력하세요.")
@@ -194,11 +203,12 @@ st.session_state.stock_input_df["전일마감재고"] = edited_stock["전일마�
 st.session_state.stock_input_df["당일입고예정량"] = edited_stock["당일입고예정량"].fillna(0)
 
 
-# --- [파트 4] 최적 발주 필요량 계산 및 결과 출력 ---
+# --- [파트 4] 최적 발주 필요량 및 MOQ 비교 검증 ---
 st.markdown("---")
-st.subheader("🚀 5. 당일 최적 발주 필요량 결과 (소계, 안전재고비율 산정)")
+st.subheader("🚀 5. 당일 최적 발주 필요량 결과 (MOQ 대비 부족 여부 체크)")
 
 def calculate_row_data(row):
+    item_name = row["구분2"]
     avg_use = float(row["평균사용량"]) if pd.notnull(row["평균사용량"]) else 0.0
     prev_stock = float(row["전일마감재고"]) if pd.notnull(row["전일마감재고"]) else 0.0
     incoming = float(row["당일입고예정량"]) if pd.notnull(row["당일입고예정량"]) else 0.0
@@ -224,13 +234,24 @@ def calculate_row_data(row):
     else:
         order_box = float(math.ceil(needed_qty))
         
-    return pd.Series([base_stock, subtotal_stock, safety_stock, safety_ratio, order_box])
+    # 품목별 MOQ 가져오기
+    item_moq = moq_dict.get(item_name, 0)
+    
+    # MOQ 대비 부족 여부 체크 로직
+    if order_box == 0:
+        moq_status = "발주 불필요 (0)"
+    elif order_box < item_moq:
+        moq_status = f"⚠️ MOQ 미달 (필요:{int(order_box)} < MOQ:{item_moq})"
+    else:
+        moq_status = f"✅ MOQ 충족 이상"
+
+    return pd.Series([base_stock, subtotal_stock, safety_stock, safety_ratio, order_box, item_moq, moq_status])
 
 result_df = edited_stock.copy()
-result_df[["당일기초재고", "미발주_소계", "안전재고", "안전재고비율", "발주필요량(BOX)"]] = result_df.apply(calculate_row_data, axis=1)
+result_df[["당일기초재고", "미발주_소계", "안전재고", "안전재고비율", "발주필요량(BOX)", "기준MOQ", "MOQ대비상태"]] = result_df.apply(calculate_row_data, axis=1)
 
 st.dataframe(
-    result_df[["구분2", "입수(BOX)", "평균사용량", "전일마감재고", "당일입고예정량", "당일기초재고", "미발주_소계", "안전재고", "안전재고비율", "발주필요량(BOX)"]].fillna(0),
+    result_df[["구분2", "입수(BOX)", "평균사용량", "전일마감재고", "당일입고예정량", "당일기초재고", "미발주_소계", "안전재고", "안전재고비율", "발주필요량(BOX)", "기준MOQ", "MOQ대비상태"]].fillna(0),
     column_config={
         "구분2": st.column_config.TextColumn("품목", disabled=True),
         "입수(BOX)": st.column_config.NumberColumn("입수(BOX)", format="%d", disabled=True),
@@ -242,6 +263,8 @@ st.dataframe(
         "안전재고": st.column_config.NumberColumn("안전재고", format="%.1f", disabled=True),
         "안전재고비율": st.column_config.NumberColumn("안전재고비율", format="%.1f%%"),
         "발주필요량(BOX)": st.column_config.NumberColumn("발주필요량(BOX)", format="%d", disabled=True),
+        "기준MOQ": st.column_config.NumberColumn("기준 MOQ", format="%d", disabled=True),
+        "MOQ대비상태": st.column_config.TextColumn("MOQ 대비 상태"),
     },
     hide_index=True,
     use_container_width=True,
