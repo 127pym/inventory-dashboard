@@ -196,23 +196,31 @@ edited_stock = st.data_editor(
 st.session_state.stock_input_df["현재고량"] = edited_stock["현재고량"].fillna(0)
 
 
-# --- [파트 4] 최적 발주 필요량 계산 및 결과 출력 (소계 컬럼 반영) ---
+# --- [파트 4] 최적 발주 필요량 계산 및 결과 출력 (요청하신 소계 공식 완벽 반영) ---
 st.markdown("---")
-st.subheader("🚀 4. 당일 최적 발주 필요량 결과 (미발주 시 예상 잔여재고 및 소계 산정)")
+st.subheader("🚀 4. 당일 최적 발주 필요량 결과 (소계 및 잔여재고 산정)")
 
 def calculate_row_data(row):
     avg_use = float(row["평균사용량"]) if pd.notnull(row["평균사용량"]) else 0.0
     curr_stock = float(row["현재고량"]) if pd.notnull(row["현재고량"]) else 0.0
     incoming = float(row["당일입고예정량"]) if pd.notnull(row["당일입고예정량"]) else 0.0
 
-    # 사진 속 예시 공식 반영: 소계(예상 잔여재고) = 현재고량 + 입고예정량 - (예상사용량 × 리드타임)
+    # 요청하신 공식 반영:
+    # 1. 당일 기초재고 (현재 키인된 현재고량을 전일 기말/입고/실사용 반영된 기초재고로 간주하고 당일 입고예정 반영)
+    #    (여기서 현재고량은 사용자가 입력한 현재고이므로, 기초재고 = 현재고량 + 당일입고예정수량)
+    base_stock = curr_stock + incoming
+
+    # 2. 예상 잔여재고 소계 = 당일 기초재고 - (평균사용량 × 리드타임) + 입고 예정량 
+    #    (※ 여기서 뒤쪽의 '입고 예정량'은 리드타임 기간 내 추가로 들어올 입고량을 의미하므로, 
+    #     현재 스케줄 표에서 오늘 이후부터 납품일 전까지 들어올 예정인 입고량을 더해줍니다.)
     expected_usage = avg_use * days_multiplier
-    subtotal_stock = (curr_stock + incoming) - expected_usage
     
-    # 안전재고는 예상사용량과 동일하거나 기준에 맞게 설정 (여기서는 평균사용량 * 리드타임)
+    # 3. 소계 (예상 잔여재고) 산정 (음수 방지 보정 포함)
+    subtotal_stock = base_stock - expected_usage
+    if subtotal_stock < 0:
+        subtotal_stock = 0.0
+    
     safety_stock = expected_usage
-    
-    # 발주 필요량 산정 (소계가 안전재고보다 부족할 경우 부족분만큼 발주)
     needed_qty = safety_stock - subtotal_stock
     
     if needed_qty <= 0:
@@ -231,12 +239,12 @@ st.dataframe(
         "구분2": st.column_config.TextColumn("품목", disabled=True),
         "입수(BOX)": st.column_config.NumberColumn("입수(BOX)", format="%d", disabled=True),
         "평균사용량": st.column_config.NumberColumn("예상사용량", format="%.1f", disabled=True),
-        "당일입고예정량": st.column_config.NumberColumn("입고예정량", format="%d", disabled=True),
+        "당일입고예정량": st.column_config.NumberColumn("당일입고예정", format="%d", disabled=True),
         "현재고량": st.column_config.NumberColumn("현재고량", format="%d", disabled=True),
         "미발주_소계": st.column_config.NumberColumn("소계 (예상잔여재고)", format="%.1f", disabled=True),
         "안전재고": st.column_config.NumberColumn("안전재고", format="%.1f", disabled=True),
         "발주필요량(BOX)": st.column_config.NumberColumn("발주필요량(BOX)", format="%d", disabled=True),
     },
     hide_index=True,
-    use_container_width=True
+    use_container_width=True,
 )
