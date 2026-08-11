@@ -81,7 +81,7 @@ if "stock_input_df" not in st.session_state:
     })
 
 
-# --- [납품 예정일 설정 및 저장 버튼 통합 배치 (깨짐 방지)] ---
+# --- [납품 예정일 설정 및 저장 버튼 통합 배치] ---
 st.markdown("---")
 st.subheader("🎯 납품(도착) 예정일 설정 및 데이터 관리")
 
@@ -93,7 +93,7 @@ with ctrl_col1:
         submitted = st.form_submit_button("📅 납품일 적용")
 
 with ctrl_col2:
-    st.write("") # 간격 맞춤
+    st.write("") 
     st.write("") 
     if st.button("💾 현재 입력 데이터 저장", use_container_width=True):
         if "recent_10days_df" in st.session_state and "schedule_df" in st.session_state and "stock_input_df" in st.session_state:
@@ -158,9 +158,10 @@ edited_schedule = st.data_editor(
 )
 st.session_state.schedule_df = edited_schedule.fillna(0)
 
+# 당일 입고예정량 추출 안전장치 (길이 오류 원천 차단)
 today_str_md = today.strftime('%m/%d')
 if today_str_md in edited_schedule.columns:
-    today_incoming = edited_schedule[today_str_md].fillna(0)
+    today_incoming = edited_schedule[today_str_md].fillna(0).reset_index(drop=True)
 else:
     today_incoming = pd.Series([0] * len(items_list))
 
@@ -170,12 +171,13 @@ st.markdown("---")
 st.subheader("📝 3. 당일 재고 키인")
 st.info(f"현재고를 키인하세요. **'평균사용량'과 '오늘({today.strftime('%m/%d')}) 당일 입고예정량'**이 함께 표시됩니다.")
 
+# 데이터 개수(행 길이)를 정확히 맞추기 위해 reset_index 적용
 combined_stock_df = pd.DataFrame({
     "구분2": items_list,
     "입수(BOX)": plt_list,  
-    "평균사용량": calculated_avg,  
-    "현재고량": st.session_state.stock_input_df["현재고량"],
-    "당일입고예정량": today_incoming  
+    "평균사용량": calculated_avg.reset_index(drop=True),  
+    "현재고량": st.session_state.stock_input_df["현재고량"].fillna(0).reset_index(drop=True),
+    "당일입고예정량": today_incoming.reset_index(drop=True)
 })
 
 edited_stock = st.data_editor(
