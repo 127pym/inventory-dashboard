@@ -7,34 +7,12 @@ st.set_page_config(layout="wide", page_title="물류 자동화 대시보드")
 
 st.title("📦 물류 재고 및 발주 자동화 대시보드")
 
-# --- [상단 컨트롤러] 납품(도착) 예정일 선택 기능 ---
-st.sidebar.header("⚙️ 발주 및 납품 설정")
 today = datetime.now()
+yesterday = today - timedelta(days=1)
+recent_dates = [(yesterday - timedelta(days=i)).strftime('%m/%d') for i in range(9, -1, -1)]
+future_dates = [(today + timedelta(days=i)).strftime('%m/%d') for i in range(5)]
 
-# 기본 납품일은 내일(D+1) 또는 모레 등으로 유연하게 설정 가능 (기본값: 내일)
-default_delivery_date = today.date() + timedelta(days=1)
-delivery_date = st.sidebar.date_input("🎯 납품(도착) 예정일 선택", default_delivery_date)
-
-# 선택한 납품일의 요일 (0: 월, 1: 화, 2: 수, 3: 목, 4: 금, 5: 토, 6: 일)
-delivery_weekday = delivery_date.weekday()
-
-# 납품일 기준으로 데이터 집계일 세팅
-# (예: 납품일 전날까지의 사용량 집계, 납품일 기준 스케줄 등)
-delivery_dt = datetime.combine(delivery_date, datetime.min.time())
-yesterday_of_delivery = delivery_dt - timedelta(days=1)
-recent_dates = [(yesterday_of_delivery - timedelta(days=i)).strftime('%m/%d') for i in range(9, -1, -1)]
-future_dates = [(delivery_dt + timedelta(days=i)).strftime('%m/%d') for i in range(5)]
-
-st.write(f"📅 **지정된 납품(도착)일: {delivery_date.strftime('%Y-%m-%d')}** (사용량 집계 기준: {recent_dates[0]} ~ {recent_dates[-1]})")
-
-# 요일별 특수성 반영 (예: 월요일 납품분의 경우 금/토/일 주말 물량이 겹치므로 배수 조정 가능)
-if delivery_weekday == 0:  # 월요일 납품
-    st.warning("⚠️ 월요일 납품 감지: 주말 물량 통합 반영 모드 작동")
-    multiplier = 3 
-elif delivery_weekday == 3:  # 목요일 납품 등 필요시 추가 로직
-    multiplier = 1
-else:
-    multiplier = 1
+st.write(f"오늘 날짜: {today.strftime('%Y-%m-%d')} (사용량 기본 집계: {recent_dates[0]} ~ {recent_dates[-1]})")
 
 # 품목 리스트 및 기본 입수 정보
 items_list = [
@@ -51,16 +29,6 @@ if "recent_10days_df" not in st.session_state:
     for d_str in recent_dates:
         initial_data[d_str] = [100] * len(items_list) 
     st.session_state.recent_10days_df = pd.DataFrame(initial_data)
-else:
-    current_cols = ["구분2"] + recent_dates
-    if list(st.session_state.recent_10days_df.columns) != current_cols:
-        new_df = pd.DataFrame({"구분2": items_list})
-        for d_str in recent_dates:
-            if d_str in st.session_state.recent_10days_df.columns:
-                new_df[d_str] = st.session_state.recent_10days_df[d_str]
-            else:
-                new_df[d_str] = [100] * len(items_list)
-        st.session_state.recent_10days_df = new_df
 
 # 2. 세션 상태 초기화 (향후 확정 입고 예정 스케줄 표)
 if "schedule_df" not in st.session_state:
@@ -79,7 +47,7 @@ if "stock_input_df" not in st.session_state:
 
 # --- [파트 1] 최근 10일 사용량 키인 ---
 st.subheader("📝 1. 최근 10일 사용량 키인")
-st.info(f"납품일 전날({recent_dates[-1]})까지의 일자별 실적 입력")
+st.info(f"어제({recent_dates[-1]})까지의 일자별 실적 입력")
 
 col_config_10days = {"구분2": st.column_config.TextColumn("품목", disabled=True)}
 for d_str in recent_dates:
@@ -102,7 +70,7 @@ calculated_avg = edited_10days[days_columns].mean(axis=1)
 # --- [파트 2] 향후 확정 입고 예정 스케줄 관리 ---
 st.markdown("---")
 st.subheader("📅 2. 향후 확정 입고 예정 스케줄 관리")
-st.info("납품일 기준 전후로 입고될 날짜별 수량을 입력하세요.")
+st.info("이미 발주가 확정되어 입고될 날짜별 수량을 입력하세요.")
 
 col_config_sched = {"구분2": st.column_config.TextColumn("품목", disabled=True)}
 for f_date in future_dates:
@@ -117,12 +85,11 @@ edited_schedule = st.data_editor(
 )
 st.session_state.schedule_df = edited_schedule
 
-# 납품일 기준 리드타임 내 입고 예정량 자동 합산
 lead_time_days_to_sum = future_dates[:3] 
 auto_incoming = edited_schedule[lead_time_days_to_sum].sum(axis=1)
 
 
-# --- [파트 3] 당일 재고 키인 (평균 및 입고예정 자동 연동) ---
+# --- [파트 3] 당일 재고 키인 ---
 st.markdown("---")
 st.subheader("📝 3. 당일 재고 키인")
 st.info("현재고를 키인하세요. **'평균사용량'과 '납품예정량(확정 스케줄 자동 연동)'**이 함께 표시됩니다.")
@@ -152,14 +119,30 @@ edited_stock = st.data_editor(
 st.session_state.stock_input_df["현재고량"] = edited_stock["현재고량"]
 
 
-# --- [파트 4] 최적 발주 필요량 계산 및 결과 출력 ---
+# --- [파트 4] 최적 발주 필요량 계산 및 결과 출력 (날짜 선택 기능 포함) ---
 st.markdown("---")
 st.subheader("🚀 4. 당일 최적 발주 필요량 결과")
 
+# 4번 표 바로 근처에 납품 예정일 입력 필드 배치 (YYYY-MM-DD 형식 텍스트 기반 선택)
+col_d1, col_d2 = st.columns([1, 3])
+with col_d1:
+    target_delivery_date_str = st.text_input("🎯 납품(도착) 예정일", value=today.strftime('%Y-%m-%d'))
+
+try:
+    target_date = datetime.strptime(target_delivery_date_str.strip(), "%Y-%m-%d")
+    # 오늘 날짜와 선택한 납품일 사이의 일수 계산 (최소 1일 보장)
+    days_diff = (target_date.date() - today.date()).days
+    days_multiplier = max(1, days_diff)
+except ValueError:
+    st.error("⚠️ 날짜 형식이 잘못되었습니다. YYYY-MM-DD 형식(예: 2026-08-11)으로 입력해주세요.")
+    days_multiplier = 3
+
+st.info(f"💡 설정된 납품일({target_delivery_date_str}) 기준, 안전재고 및 소모량 계산 배수: **X {days_multiplier}** 적용 중")
+
 def calculate_order(row):
-    safety_stock = row["평균사용량"] * 3
+    safety_stock = row["평균사용량"] * days_multiplier
     base_stock = row["현재고량"] + row["납품예정량(확정연동)"]
-    expected_stock = base_stock - (row["평균사용량"] * 3 * multiplier)
+    expected_stock = base_stock - (row["평균사용량"] * days_multiplier)
     needed_qty = safety_stock - expected_stock
     
     if needed_qty <= 0:
@@ -170,18 +153,19 @@ def calculate_order(row):
         return float(pallets)
 
 result_df = edited_stock.copy()
-result_df["안전재고"] = result_df["평균사용량"] * 3
+safety_col_name = f"안전재고(사용량 x {days_multiplier})"
+result_df[safety_col_name] = result_df["평균사용량"] * days_multiplier
 result_df["발주필요량(PLT)"] = result_df.apply(calculate_order, axis=1)
 
 st.dataframe(
-    result_df[["구분2", "입수(PLT)", "평균사용량", "현재고량", "납품예정량(확정연동)", "안전재고", "발주필요량(PLT)"]],
+    result_df[["구분2", "입수(PLT)", "평균사용량", "현재고량", "납품예정량(확정연동)", safety_col_name, "발주필요량(PLT)"]],
     column_config={
         "구분2": st.column_config.TextColumn("품목", disabled=True),
         "입수(PLT)": st.column_config.NumberColumn("입수(PLT)", format="%d", disabled=True),
         "평균사용량": st.column_config.NumberColumn("평균사용량", format="%.1f", disabled=True),
         "현재고량": st.column_config.NumberColumn("현재고량", format="%d", disabled=True),
         "납품예정량(확정연동)": st.column_config.NumberColumn("납품예정량", format="%d", disabled=True),
-        "안전재고": st.column_config.NumberColumn("안전재고", format="%.1f", disabled=True),
+        safety_col_name: st.column_config.NumberColumn("안전재고", format="%.1f", disabled=True),
         "발주필요량(PLT)": st.column_config.NumberColumn("발주필요량(PLT)", format="%.1f", disabled=True),
     },
     hide_index=True,
