@@ -101,10 +101,11 @@ edited_10days = st.data_editor(
     height=420,
     key="editor_10days"
 )
-st.session_state.recent_10days_df = edited_10days
+# 복붙 시 None이나 빈칸이 생기면 0으로 자동 변환
+st.session_state.recent_10days_df = edited_10days.fillna(0)
 
 days_columns = [col for col in edited_10days.columns if col != "구분2"]
-calculated_avg = edited_10days[days_columns].mean(axis=1)
+calculated_avg = edited_10days[days_columns].fillna(0).mean(axis=1)
 
 
 # --- [파트 2] 향후 확정 입고 예정 스케줄 관리 ---
@@ -124,9 +125,9 @@ edited_schedule = st.data_editor(
     height=420,
     key="editor_schedule"
 )
-st.session_state.schedule_df = edited_schedule
+# 복붙 시 None이나 빈칸이 생기면 0으로 자동 변환
+st.session_state.schedule_df = edited_schedule.fillna(0)
 
-# [핵심 수정] 납품일 기준이 아니라, '오늘(today)' 날짜에 해당하는 입고 예정량을 가져옴!
 today_str_md = today.strftime('%m/%d')
 if today_str_md in edited_schedule.columns:
     today_incoming = edited_schedule[today_str_md].fillna(0)
@@ -144,7 +145,7 @@ combined_stock_df = pd.DataFrame({
     "입수(BOX)": plt_list,  
     "평균사용량": calculated_avg,  
     "현재고량": st.session_state.stock_input_df["현재고량"],
-    "당일입고예정량": today_incoming  # <-- 오늘 당일 입고예정으로 명칭 및 데이터 변경
+    "당일입고예정량": today_incoming  
 })
 
 edited_stock = st.data_editor(
@@ -162,7 +163,8 @@ edited_stock = st.data_editor(
     key="editor_stock"
 )
 
-st.session_state.stock_input_df["현재고량"] = edited_stock["현재고량"]
+# 복붙 시 None이나 빈칸이 생기면 0으로 자동 변환
+st.session_state.stock_input_df["현재고량"] = edited_stock["현재고량"].fillna(0)
 
 
 # --- [파트 4] 최적 발주 필요량 계산 및 결과 출력 ---
@@ -190,7 +192,7 @@ result_df[safety_col_name] = result_df["평균사용량"] * days_multiplier
 result_df["발주필요량(BOX)"] = result_df.apply(calculate_order, axis=1)
 
 st.dataframe(
-    result_df[["구분2", "입수(BOX)", "평균사용량", "현재고량", "당일입고예정량", safety_col_name, "발주필요량(BOX)"]],
+    result_df[["구분2", "입수(BOX)", "평균사용량", "현재고량", "당일입고예정량", safety_col_name, "발주필요량(BOX)"]].fillna(0),
     column_config={
         "구분2": st.column_config.TextColumn("품목", disabled=True),
         "입수(BOX)": st.column_config.NumberColumn("입수(BOX)", format="%d", disabled=True),
