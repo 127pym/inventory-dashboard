@@ -143,7 +143,6 @@ st.session_state.stock_input_df["현재고량"] = edited_stock["현재고량"]
 st.markdown("---")
 st.subheader("🚀 4. 당일 최적 발주 필요량 결과")
 
-# 발주 계산 로직 함수 적용
 def calculate_order(row):
     safety_stock = row["평균사용량"] * 3
     base_stock = row["현재고량"] + row["납품예정량(확정연동)"]
@@ -161,15 +160,18 @@ result_df = edited_stock.copy()
 result_df["안전재고(사용량x3)"] = result_df["평균사용량"] * 3
 result_df["발주필요량(PLT)"] = result_df.apply(calculate_order, axis=1)
 
+# 에러를 일으키는 .background_gradient 부분을 제거하고 깔끔한 포맷팅만 적용
 st.dataframe(
-    result_df[["구분2", "입수(PLT)", "평균사용량", "현재고량", "납품예정량(확정연동)", "안전재고(사용량x3)", "발주필요량(PLT)"]]
-      .style.format({
-          "평균사용량": "{:.1f}",
-          "현재고량": "{:,}",
-          "납품예정량(확정연동)": "{:,}",
-          "안전재고(사용량x3)": "{:.1f}",
-          "발주필요량(PLT)": "{:.1f}"
-      })
-      .background_gradient(subset=["발주필요량(PLT)"], cmap="YlOrRd"),
+    result_df[["구분2", "입수(PLT)", "평균사용량", "현재고량", "납품예정량(확정연동)", "안전재고(사용량x3)", "발주필요량(PLT)"]],
+    column_config={
+        "구분2": st.column_config.TextColumn("품목", disabled=True),
+        "입수(PLT)": st.column_config.NumberColumn("입수(PLT)", format="%d", disabled=True),
+        "평균사용량": st.column_config.NumberColumn("평균사용량", format="%.1f", disabled=True),
+        "현재고량": st.column_config.NumberColumn("현재고량", format="%d", disabled=True),
+        "납품예정량(확정연동)": st.column_config.NumberColumn("납품예정량", format="%d", disabled=True),
+        "안전재고(사용량x3)": st.column_config.NumberColumn("안전재고", format="%.1f", disabled=True),
+        "발주필요량(PLT)": st.column_config.NumberColumn("발주필요량(PLT)", format="%.1f", disabled=True),
+    },
+    hide_index=True,
     use_container_width=True
 )
