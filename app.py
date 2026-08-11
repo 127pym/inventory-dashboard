@@ -23,7 +23,7 @@ st.write(f"오늘 날짜: {today.strftime('%Y-%m-%d')} (사용량 자동 집계:
 # 품목 리스트 및 기본 입수 정보 (입수 = 1 PLT 당 박스 수)
 items_list = [
     "101", "102", "103", 
-    "스타 13호(양곡20kg)", "스타 1호", "스타 2호", 
+    "스타 13호(양곡20kg)", "스타 1호", "스타 2号" if False else "스타 2호", 
     "스타 3호", "스타 4호", "스타 5호", 
     "스타 6호", "스타 7호", "스타 8호", "스타 11호"
 ]
@@ -36,13 +36,14 @@ if os.path.exists(SAVE_FILE) and "loaded" not in st.session_state:
         loaded_dict = loaded_df.iloc[0].to_dict()
         st.session_state.recent_10days_df = pd.DataFrame(loaded_dict["recent_10days"])
         st.session_state.schedule_df = pd.DataFrame(loaded_dict["schedule"])
-        st.session_state.stock_input_df = pd.DataFrame(loaded_dict["stock_input"])
+        if "stock_input" in loaded_dict:
+            st.session_state.stock_input_df = pd.DataFrame(loaded_dict["stock_input"])
         st.session_state.loaded = True
     except Exception as e:
         pass
 
 
-# --- [세션 상태 유지 및 데이터 동기화 로직] ---
+# --- [세션 상태 유지 및 데이터 동기화 로직 (구조 충돌 방지)] ---
 
 if "recent_10days_df" not in st.session_state:
     initial_data = {"구분2": items_list}
@@ -74,17 +75,13 @@ else:
             new_sched_df[f_date] = [0] * len(items_list)
     st.session_state.schedule_df = new_sched_df
 
-# 재고 입력 상태 관리 (전일마감재고 + 당일입고예정량 키인용)
-if "stock_input_df" not in st.session_state:
+# 재고 입력 상태 관리 (컬럼명 키오류 원천 차단 및 초기화)
+if "stock_input_df" not in st.session_state or "전일마감재고" not in st.session_state.stock_input_df.columns:
     st.session_state.stock_input_df = pd.DataFrame({
         "구분2": items_list,
         "전일마감재고": [0] * len(items_list),
         "당일입고예정량": [0] * len(items_list)
     })
-else:
-    # 혹시 기존 세션에 '당일입고예정량' 컬럼이 없으면 보정
-    if "당일입고예정량" not in st.session_state.stock_input_df.columns:
-        st.session_state.stock_input_df["당일입고예정량"] = [0] * len(items_list)
 
 
 # --- [납품 예정일 설정 및 저장 버튼 통합 배치] ---
@@ -165,7 +162,7 @@ edited_schedule = st.data_editor(
 st.session_state.schedule_df = edited_schedule.fillna(0)
 
 
-# --- [파트 3] 전일 마감 재고 및 당일 입고예정 키인 (직접 입력 체계) ---
+# --- [파트 3] 전일 마감 재고 및 당일 입고예정 키인 ---
 st.markdown("---")
 st.subheader("📝 3. 재고 및 당일 입고예정 키인")
 st.info("**전일마감재고**와 **당일입고예정량**을 직접 키인하세요. 평균사용량이 함께 표시됩니다.")
@@ -193,7 +190,6 @@ edited_stock = st.data_editor(
     key="editor_stock"
 )
 
-# 키인한 값을 세션에 즉시 저장
 st.session_state.stock_input_df["전일마감재고"] = edited_stock["전일마감재고"].fillna(0)
 st.session_state.stock_input_df["당일입고예정량"] = edited_stock["당일입고예정량"].fillna(0)
 
@@ -207,10 +203,7 @@ def calculate_row_data(row):
     prev_stock = float(row["전일마감재고"]) if pd.notnull(row["전일마감재고"]) else 0.0
     incoming = float(row["당일입고예정량"]) if pd.notnull(row["당일입고예정량"]) else 0.0
 
-    # 1. 당일 기초재고 = 전일 마감재고 + 당일 입고예정량
     base_stock = prev_stock + incoming
-
-    # 2. 미발주 시 예상 잔여재고 (소계) = 당일 기초재고 - (평균사용량 × 리드타임)
     expected_usage = avg_use * days_multiplier
     subtotal_stock = base_stock - expected_usage
     
