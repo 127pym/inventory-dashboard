@@ -10,7 +10,10 @@ st.title("📦 물류 재고 및 발주 자동화 대시보드")
 today = datetime.now()
 yesterday = today - timedelta(days=1)
 recent_dates = [(yesterday - timedelta(days=i)).strftime('%m/%d') for i in range(9, -1, -1)]
-future_dates = [(today + timedelta(days=i)).strftime('%m/%d') for i in range(7)]
+
+# 스케줄 표의 날짜를 YYYY-MM-DD와 MM/D 형태로 모두 대응할 수 있도록 넉넉히 생성
+future_dates_obj = [today + timedelta(days=i) for i in range(7)]
+future_dates_md = [d.strftime('%m/%d') for d in future_dates_obj]
 
 st.write(f"오늘 날짜: {today.strftime('%Y-%m-%d')} (사용량 기본 집계: {recent_dates[0]} ~ {recent_dates[-1]})")
 
@@ -30,10 +33,10 @@ if "recent_10days_df" not in st.session_state:
         initial_data[d_str] = [100] * len(items_list) 
     st.session_state.recent_10days_df = pd.DataFrame(initial_data)
 
-# 2. 세션 상태 초기화 (향후 확정 입고 예정 스케줄 표)
+# 2. 세션 상태 초기화 (향후 확정 입고 예정 스케줄 표 - MM/D 기준으로 깔끔하게 고정)
 if "schedule_df" not in st.session_state:
     sched_data = {"구분2": items_list}
-    for f_date in future_dates:
+    for f_date in future_dates_md:
         sched_data[f_date] = [0] * len(items_list)
     st.session_state.schedule_df = pd.DataFrame(sched_data)
 
@@ -45,18 +48,18 @@ if "stock_input_df" not in st.session_state:
     })
 
 
-# --- [납품 예정일 설정 (4번 및 3번 연동용)] ---
+# --- [납품 예정일 설정] ---
 st.markdown("---")
 st.subheader("🎯 납품(도착) 예정일 설정")
 with st.form("date_form"):
     col_d1, col_d2 = st.columns([1, 3])
     with col_d1:
-        target_delivery_date_str = st.text_input("납품 예정일", value=today.strftime('%Y-%m-%d'))
+        target_delivery_date_str = st.text_input("납품 예정일 (YYYY-MM-DD)", value=today.strftime('%Y-%m-%d'))
     submitted = st.form_submit_button("📅 납품일 적용")
 
 try:
     target_date = datetime.strptime(target_delivery_date_str.strip(), "%Y-%m-%d")
-    target_date_str_md = target_date.strftime('%m/%d') 
+    target_date_str_md = target_date.strftime('%m/%d') # 스케줄 표 컬럼과 맞춤 (예: 08/11)
     days_diff = (target_date.date() - today.date()).days
     days_multiplier = max(1, days_diff)
 except ValueError:
@@ -95,7 +98,7 @@ st.subheader("📅 2. 향후 확정 입고 예정 스케줄 관리")
 st.info("이미 발주가 확정되어 입고될 날짜별 수량을 입력하세요.")
 
 col_config_sched = {"구분2": st.column_config.TextColumn("품목", disabled=True)}
-for f_date in future_dates:
+for f_date in future_dates_md:
     col_config_sched[f_date] = st.column_config.NumberColumn(f"{f_date} 입고", format="%d")
 
 edited_schedule = st.data_editor(
@@ -108,9 +111,9 @@ edited_schedule = st.data_editor(
 )
 st.session_state.schedule_df = edited_schedule
 
-# 사용자가 선택한 특정 납품일에 해당하는 입고량 추출
+# 스케줄 표에서 선택한 날짜에 해당하는 입고량 안전하게 추출 (None 방지)
 if target_date_str_md in edited_schedule.columns:
-    specific_incoming = edited_schedule[target_date_str_md]
+    specific_incoming = edited_schedule[target_date_str_md].fillna(0)
 else:
     specific_incoming = pd.Series([0] * len(items_list))
 
@@ -120,7 +123,6 @@ st.markdown("---")
 st.subheader("📝 3. 당일 재고 키인")
 st.info(f"현재고를 키인하세요. **'평균사용량'과 선택하신 납품일({target_delivery_date_str})의 '입고예정량'**이 함께 표시됩니다.")
 
-# 컬럼 이름을 고정하여 에러 원천 차단
 combined_stock_df = pd.DataFrame({
     "구분2": items_list,
     "입수(PLT)": plt_list,
