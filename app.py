@@ -58,11 +58,11 @@ edited_10days = st.data_editor(
     column_config=col_config_10days,
     hide_index=True,
     use_container_width=True,
-    height=420
+    height=420,
+    key="editor_10days"
 )
 st.session_state.recent_10days_df = edited_10days
 
-# 10일 치 데이터의 행별 평균 계산
 days_columns = [col for col in edited_10days.columns if col != "구분2"]
 calculated_avg = edited_10days[days_columns].mean(axis=1)
 
@@ -81,7 +81,8 @@ edited_schedule = st.data_editor(
     column_config=col_config_sched,
     hide_index=True,
     use_container_width=True,
-    height=420
+    height=420,
+    key="editor_schedule"
 )
 st.session_state.schedule_df = edited_schedule
 
@@ -113,28 +114,30 @@ edited_stock = st.data_editor(
     },
     hide_index=True,
     use_container_width=True,
-    height=420
+    height=420,
+    key="editor_stock"
 )
 
 st.session_state.stock_input_df["현재고량"] = edited_stock["현재고량"]
 
 
-# --- [파트 4] 최적 발주 필요량 계산 및 결과 출력 (날짜 선택 기능 포함) ---
+# --- [파트 4] 최적 발주 필요량 계산 및 결과 출력 (폼 적용으로 에러 차단) ---
 st.markdown("---")
 st.subheader("🚀 4. 당일 최적 발주 필요량 결과")
 
-# 4번 표 바로 근처에 납품 예정일 입력 필드 배치 (YYYY-MM-DD 형식 텍스트 기반 선택)
-col_d1, col_d2 = st.columns([1, 3])
-with col_d1:
-    target_delivery_date_str = st.text_input("🎯 납품(도착) 예정일", value=today.strftime('%Y-%m-%d'))
+# st.form을 사용하여 텍스트 입력 시 화면이 매번 깜빡이며 DOM 충돌을 일으키는 현상 방지
+with st.form("calc_form"):
+    col_d1, col_d2 = st.columns([1, 3])
+    with col_d1:
+        target_delivery_date_str = st.text_input("🎯 납품(도착) 예정일", value=today.strftime('%Y-%m-%d'))
+    
+    submitted = st.form_submit_button("🔄 발주량 계산 적용")
 
 try:
     target_date = datetime.strptime(target_delivery_date_str.strip(), "%Y-%m-%d")
-    # 오늘 날짜와 선택한 납품일 사이의 일수 계산 (최소 1일 보장)
     days_diff = (target_date.date() - today.date()).days
     days_multiplier = max(1, days_diff)
 except ValueError:
-    st.error("⚠️ 날짜 형식이 잘못되었습니다. YYYY-MM-DD 형식(예: 2026-08-11)으로 입력해주세요.")
     days_multiplier = 3
 
 st.info(f"💡 설정된 납품일({target_delivery_date_str}) 기준, 안전재고 및 소모량 계산 배수: **X {days_multiplier}** 적용 중")
