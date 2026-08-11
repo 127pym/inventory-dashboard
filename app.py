@@ -7,19 +7,32 @@ st.set_page_config(layout="wide", page_title="물류 자동화 대시보드")
 
 st.title("📦 물류 재고 및 발주 자동화 대시보드")
 
-# 오늘 날짜 기준 세팅
+# --- [상단 컨트롤러] 납품(도착) 예정일 선택 기능 ---
+st.sidebar.header("⚙️ 발주 및 납품 설정")
 today = datetime.now()
-yesterday = today - timedelta(days=1)
-recent_dates = [(yesterday - timedelta(days=i)).strftime('%m/%d') for i in range(9, -1, -1)]
-future_dates = [(today + timedelta(days=i)).strftime('%m/%d') for i in range(5)]
 
-st.write(f"오늘 날짜: {today.strftime('%Y-%m-%d')} (사용량 집계: {recent_dates[0]} ~ {recent_dates[-1]})")
+# 기본 납품일은 내일(D+1) 또는 모레 등으로 유연하게 설정 가능 (기본값: 내일)
+default_delivery_date = today.date() + timedelta(days=1)
+delivery_date = st.sidebar.date_input("🎯 납품(도착) 예정일 선택", default_delivery_date)
 
-# 요일별 특수성 반영 (목요일 발주 시 주말 물량 3일치 통합 계산)
-is_thursday = today.weekday() == 3 
-if is_thursday:
-    st.warning("⚠️ 목요일 감지: 주말 통합 발주 모드 활성화 (3일치 소모량 반영)")
+# 선택한 납품일의 요일 (0: 월, 1: 화, 2: 수, 3: 목, 4: 금, 5: 토, 6: 일)
+delivery_weekday = delivery_date.weekday()
+
+# 납품일 기준으로 데이터 집계일 세팅
+# (예: 납품일 전날까지의 사용량 집계, 납품일 기준 스케줄 등)
+delivery_dt = datetime.combine(delivery_date, datetime.min.time())
+yesterday_of_delivery = delivery_dt - timedelta(days=1)
+recent_dates = [(yesterday_of_delivery - timedelta(days=i)).strftime('%m/%d') for i in range(9, -1, -1)]
+future_dates = [(delivery_dt + timedelta(days=i)).strftime('%m/%d') for i in range(5)]
+
+st.write(f"📅 **지정된 납품(도착)일: {delivery_date.strftime('%Y-%m-%d')}** (사용량 집계 기준: {recent_dates[0]} ~ {recent_dates[-1]})")
+
+# 요일별 특수성 반영 (예: 월요일 납품분의 경우 금/토/일 주말 물량이 겹치므로 배수 조정 가능)
+if delivery_weekday == 0:  # 월요일 납품
+    st.warning("⚠️ 월요일 납품 감지: 주말 물량 통합 반영 모드 작동")
     multiplier = 3 
+elif delivery_weekday == 3:  # 목요일 납품 등 필요시 추가 로직
+    multiplier = 1
 else:
     multiplier = 1
 
@@ -49,7 +62,7 @@ else:
                 new_df[d_str] = [100] * len(items_list)
         st.session_state.recent_10days_df = new_df
 
-# 2. 세션 상태 초기화 (향후 확정 입고 스케줄 표)
+# 2. 세션 상태 초기화 (향후 확정 입고 예정 스케줄 표)
 if "schedule_df" not in st.session_state:
     sched_data = {"구분2": items_list}
     for f_date in future_dates:
@@ -66,7 +79,7 @@ if "stock_input_df" not in st.session_state:
 
 # --- [파트 1] 최근 10일 사용량 키인 ---
 st.subheader("📝 1. 최근 10일 사용량 키인")
-st.info(f"어제({recent_dates[-1]})까지의 일자별 실적 입력")
+st.info(f"납품일 전날({recent_dates[-1]})까지의 일자별 실적 입력")
 
 col_config_10days = {"구분2": st.column_config.TextColumn("품목", disabled=True)}
 for d_str in recent_dates:
@@ -89,7 +102,7 @@ calculated_avg = edited_10days[days_columns].mean(axis=1)
 # --- [파트 2] 향후 확정 입고 예정 스케줄 관리 ---
 st.markdown("---")
 st.subheader("📅 2. 향후 확정 입고 예정 스케줄 관리")
-st.info("이미 발주가 확정되어 입고될 날짜별 수량을 입력하세요. **리드타임 내(오늘 포함 향후 3일) 입고량은 아래 당일 재고 표에 자동 합산**됩니다.")
+st.info("납품일 기준 전후로 입고될 날짜별 수량을 입력하세요.")
 
 col_config_sched = {"구분2": st.column_config.TextColumn("품목", disabled=True)}
 for f_date in future_dates:
@@ -104,7 +117,7 @@ edited_schedule = st.data_editor(
 )
 st.session_state.schedule_df = edited_schedule
 
-# 리드타임 내(오늘 포함 향후 3일간) 확정 입고 예정량 자동 합산
+# 납품일 기준 리드타임 내 입고 예정량 자동 합산
 lead_time_days_to_sum = future_dates[:3] 
 auto_incoming = edited_schedule[lead_time_days_to_sum].sum(axis=1)
 
@@ -157,19 +170,18 @@ def calculate_order(row):
         return float(pallets)
 
 result_df = edited_stock.copy()
-result_df["안전재고(사용량x3)"] = result_df["평균사용량"] * 3
+result_df["안전재고"] = result_df["평균사용량"] * 3
 result_df["발주필요량(PLT)"] = result_df.apply(calculate_order, axis=1)
 
-# 에러를 일으키는 .background_gradient 부분을 제거하고 깔끔한 포맷팅만 적용
 st.dataframe(
-    result_df[["구분2", "입수(PLT)", "평균사용량", "현재고량", "납품예정량(확정연동)", "안전재고(사용량x3)", "발주필요량(PLT)"]],
+    result_df[["구분2", "입수(PLT)", "평균사용량", "현재고량", "납품예정량(확정연동)", "안전재고", "발주필요량(PLT)"]],
     column_config={
         "구분2": st.column_config.TextColumn("품목", disabled=True),
         "입수(PLT)": st.column_config.NumberColumn("입수(PLT)", format="%d", disabled=True),
         "평균사용량": st.column_config.NumberColumn("평균사용량", format="%.1f", disabled=True),
         "현재고량": st.column_config.NumberColumn("현재고량", format="%d", disabled=True),
         "납품예정량(확정연동)": st.column_config.NumberColumn("납품예정량", format="%d", disabled=True),
-        "안전재고(사용량x3)": st.column_config.NumberColumn("안전재고", format="%.1f", disabled=True),
+        "안전재고": st.column_config.NumberColumn("안전재고", format="%.1f", disabled=True),
         "발주필요량(PLT)": st.column_config.NumberColumn("발주필요량(PLT)", format="%.1f", disabled=True),
     },
     hide_index=True,
