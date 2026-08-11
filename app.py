@@ -6,11 +6,9 @@ st.set_page_config(layout="wide", page_title="물류 자동화 대시보드")
 
 st.title("📦 물류 재고 및 발주 자동화 대시보드")
 
-# 1. 오늘 날짜 기준 '어제' 날짜 계산 및 최근 10일 날짜 리스트 생성 (예: M/D 형식)
+# 1. 오늘 날짜 기준 '어제' 날짜 계산 및 최근 10일 날짜 리스트 생성
 today = datetime.now()
 yesterday = today - timedelta(days=1)
-
-# 어제를 기준으로 과거 10일 날짜 생성 (오름차순: 과거 -> 어제)
 recent_dates = [(yesterday - timedelta(days=i)).strftime('%m/%d') for i in range(9, -1, -1)]
 
 st.write(f"오늘 날짜: {today.strftime('%Y-%m-%d')} (집계 기준: {recent_dates[0]} ~ {recent_dates[-1]})")
@@ -24,16 +22,14 @@ items_list = [
 ]
 plt_list = [300, 210, 210, 320, 2520, 960, 640, 640, 640, 320, 320, 320, 160]
 
-# 세션 상태 초기화 (최근 10일 사용량 키인 표 - 날짜 컬럼을 동적으로 적용)
+# 세션 상태 초기화 (최근 10일 사용량 키인 표)
 if "recent_10days_df" not in st.session_state:
     initial_data = {"구분2": items_list}
     for d_str in recent_dates:
         initial_data[d_str] = [100] * len(items_list) 
     st.session_state.recent_10days_df = pd.DataFrame(initial_data)
 else:
-    # 날짜가 바뀌어 컬럼이 달라졌을 경우 기존 품목 유지하며 날짜 컬럼만 최신화
     current_cols = ["구분2"] + recent_dates
-    # 만약 기존 세션의 컬럼과 오늘 기준 컬럼이 다르면 갱신
     if list(st.session_state.recent_10days_df.columns) != current_cols:
         new_df = pd.DataFrame({"구분2": items_list})
         for d_str in recent_dates:
@@ -56,10 +52,16 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("📝 1. 최근 10일 사용량 키인")
-    st.info(f"어제({recent_dates[-1]})까지의 일자별 실적 입력 (M/D 자동 갱신)")
+    st.info(f"어제({recent_dates[-1]})까지의 일자별 실적 입력")
+
+    # 모든 날짜 열(컬럼)이 압축되어 좌우 스크롤 없이 한눈에 들어오도록 컬럼 설정 자동 적용
+    col_config_10days = {"구분2": st.column_config.TextColumn("품목", disabled=True)}
+    for d_str in recent_dates:
+        col_config_10days[d_str] = st.column_config.NumberColumn(d_str, format="%d")
 
     edited_10days = st.data_editor(
         st.session_state.recent_10days_df,
+        column_config=col_config_10days,
         hide_index=True,
         use_container_width=True,
         height=520
@@ -77,7 +79,7 @@ with col2:
     combined_stock_df = pd.DataFrame({
         "구분2": items_list,
         "입수(PLT)": plt_list,
-        "평균사용량": calculated_avg,  # 자동 연동된 평균값
+        "평균사용량": calculated_avg,  
         "현재고량": st.session_state.stock_input_df["현재고량"],
         "납품예정량": st.session_state.stock_input_df["납품예정량"]
     })
