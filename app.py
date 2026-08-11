@@ -10,16 +10,6 @@ st.title("📦 물류 재고 및 발주 자동화 대시보드")
 
 SAVE_FILE = "inventory_data.json"
 
-# 1. 오늘 날짜 기준으로 날짜 리스트 자동 갱신 설정
-today = datetime.now()
-yesterday = today - timedelta(days=1)
-recent_dates = [(yesterday - timedelta(days=i)).strftime('%m/%d') for i in range(9, -1, -1)]
-
-future_dates_obj = [today + timedelta(days=i) for i in range(7)]
-future_dates_md = [d.strftime('%m/%d') for d in future_dates_obj]
-
-st.write(f"오늘 날짜: {today.strftime('%Y-%m-%d')} (사용량 자동 집계: {recent_dates[0]} ~ {recent_dates[-1]})")
-
 # 품목 리스트 및 기본 입수 정보 (입수 = 1 PLT 당 박스 수)
 items_list = [
     "101", "102", "103", 
@@ -28,6 +18,49 @@ items_list = [
     "스타 6호", "스타 7호", "스타 8호", "스타 11호"
 ]
 plt_list = [300, 210, 210, 320, 2520, 960, 640, 640, 640, 320, 320, 320, 160]
+
+
+# --- [최상단 배치: 날짜 설정 (표 1, 2 날짜 컬럼 자동 연동의 기준)] ---
+st.markdown("---")
+st.subheader("🎯 1. 기준일 및 납품 예정일 설정")
+
+date_col1, date_col2, save_col = st.columns([2, 2, 1])
+
+with date_col1:
+    base_date = st.date_input("발주 기준일 (오늘)", value=datetime.now().date())
+
+with date_col2:
+    target_delivery_date = st.date_input("납품(도착) 예정일", value=base_date + timedelta(days=3))
+
+# 날짜 객체 변환 및 차이 계산
+base_today = datetime.combine(base_date, datetime.min.time())
+days_diff = (target_delivery_date - base_date).days
+days_multiplier = max(1, days_diff)
+
+# [핵심] 상단 날짜 변경 시 표 1 (최근 10일) 날짜 컬럼 자동 생성
+yesterday = base_today - timedelta(days=1)
+recent_dates = [(yesterday - timedelta(days=i)).strftime('%m/%d') for i in range(9, -1, -1)]
+
+# [핵심] 상단 날짜 변경 시 표 2 (향후 입고 스케줄) 날짜 컬럼 자동 생성
+future_dates_obj = [base_today + timedelta(days=i) for i in range(max(7, days_multiplier + 1))]
+future_dates_md = [d.strftime('%m/%d') for d in future_dates_obj]
+
+with save_col:
+    st.write("") 
+    st.write("") 
+    if st.button("💾 입력 데이터 저장", use_container_width=True):
+        if "recent_10days_df" in st.session_state and "schedule_df" in st.session_state and "stock_input_df" in st.session_state:
+            save_dict = {
+                "recent_10days": st.session_state.recent_10days_df.to_dict(),
+                "schedule": st.session_state.schedule_df.to_dict(),
+                "stock_input": st.session_state.stock_input_df.to_dict()
+            }
+            df_to_save = pd.DataFrame([save_dict])
+            df_to_save.to_json(SAVE_FILE)
+            st.success("✅ 저장 완료!")
+
+st.info(f"💡 **발주 기준일:** {base_date.strftime('%Y-%m-%d')} | **납품 예정일:** {target_delivery_date.strftime('%Y-%m-%d')} (리드타임 배수: **X {days_multiplier}일**)")
+
 
 # --- [데이터 영구 저장 및 불러오기 기능] ---
 if os.path.exists(SAVE_FILE) and "loaded" not in st.session_state:
@@ -43,8 +76,9 @@ if os.path.exists(SAVE_FILE) and "loaded" not in st.session_state:
         pass
 
 
-# --- [세션 상태 유지 및 데이터 동기화 로직] ---
+# --- [세션 상태 유지 및 상단 변경 날짜와 컬럼 동기화 로직] ---
 
+# 1. 표 1 컬럼을 상단 기준일의 최근 10일 날짜로 동기화
 if "recent_10days_df" not in st.session_state:
     initial_data = {"구분2": items_list}
     for d_str in recent_dates:
@@ -60,6 +94,7 @@ else:
             new_df[d_str] = [0] * len(items_list)
     st.session_state.recent_10days_df = new_df
 
+# 2. 표 2 컬럼을 상단 기준일의 향후 스케줄 날짜로 동기화
 if "schedule_df" not in st.session_state:
     sched_data = {"구분2": items_list}
     for f_date in future_dates_md:
@@ -75,6 +110,7 @@ else:
             new_sched_df[f_date] = [0] * len(items_list)
     st.session_state.schedule_df = new_sched_df
 
+# 3. 표 3 재고 및 입고예정 입력 상태 관리
 if "stock_input_df" not in st.session_state or "전일마감재고" not in st.session_state.stock_input_df.columns:
     st.session_state.stock_input_df = pd.DataFrame({
         "구분2": items_list,
@@ -83,45 +119,10 @@ if "stock_input_df" not in st.session_state or "전일마감재고" not in st.se
     })
 
 
-# --- [납품 예정일 설정 및 저장 버튼 통합 배치] ---
+# --- [파트 1] 최근 10일 사용량 키인 (상단 날짜에 맞춰 컬럼 자동 변환) ---
 st.markdown("---")
-st.subheader("🎯 납품(도착) 예정일 설정 및 데이터 관리")
-
-ctrl_col1, ctrl_col2 = st.columns([3, 1])
-
-with ctrl_col1:
-    with st.form("date_form"):
-        target_delivery_date_str = st.text_input("납품 예정일 (YYYY-MM-DD)", value=today.strftime('%Y-%m-%d'))
-        submitted = st.form_submit_button("📅 납품일 적용")
-
-try:
-    target_date = datetime.strptime(target_delivery_date_str.strip(), "%Y-%m-%d")
-    days_diff = (target_date.date() - today.date()).days
-    days_multiplier = max(1, days_diff)
-except ValueError:
-    days_multiplier = 3
-
-with ctrl_col2:
-    st.write("") 
-    st.write("") 
-    if st.button("💾 현재 입력 데이터 저장", use_container_width=True):
-        if "recent_10days_df" in st.session_state and "schedule_df" in st.session_state and "stock_input_df" in st.session_state:
-            save_dict = {
-                "recent_10days": st.session_state.recent_10days_df.to_dict(),
-                "schedule": st.session_state.schedule_df.to_dict(),
-                "stock_input": st.session_state.stock_input_df.to_dict()
-            }
-            df_to_save = pd.DataFrame([save_dict])
-            df_to_save.to_json(SAVE_FILE)
-            st.success("✅ 저장 완료!")
-
-st.info(f"💡 설정된 납품일: **{target_delivery_date_str}** (리드타임 배수: **X {days_multiplier}일**)")
-
-
-# --- [파트 1] 최근 10일 사용량 키인 ---
-st.markdown("---")
-st.subheader("📝 1. 최근 10일 사용량 키인")
-st.info(f"어제({recent_dates[-1]})까지의 일자별 실적 입력")
+st.subheader("📝 2. 최근 10일 사용량 키인")
+st.info(f"기준일 전날({recent_dates[-1]})까지의 일자별 실적 입력")
 
 col_config_10days = {"구분2": st.column_config.TextColumn("품목", disabled=True)}
 for d_str in recent_dates:
@@ -141,9 +142,9 @@ days_columns = [col for col in edited_10days.columns if col != "구분2"]
 calculated_avg = edited_10days[days_columns].fillna(0).mean(axis=1)
 
 
-# --- [파트 2] 향후 확정 입고 예정 스케줄 관리 ---
+# --- [파트 2] 향후 확정 입고 예정 스케줄 관리 (상단 날짜에 맞춰 컬럼 자동 변환) ---
 st.markdown("---")
-st.subheader("📅 2. 향후 확정 입고 예정 스케줄 관리")
+st.subheader("📅 3. 향후 확정 입고 예정 스케줄 관리")
 st.info("이미 발주가 확정되어 입고될 날짜별 수량을 입력하세요.")
 
 col_config_sched = {"구분2": st.column_config.TextColumn("품목", disabled=True)}
@@ -163,7 +164,7 @@ st.session_state.schedule_df = edited_schedule.fillna(0)
 
 # --- [파트 3] 전일 마감 재고 및 당일 입고예정 키인 ---
 st.markdown("---")
-st.subheader("📝 3. 재고 및 당일 입고예정 키인")
+st.subheader("📝 4. 재고 및 당일 입고예정 키인")
 st.info("**전일마감재고**와 **당일입고예정량**을 직접 키인하세요. 평균사용량이 함께 표시됩니다.")
 
 combined_stock_df = pd.DataFrame({
@@ -195,17 +196,14 @@ st.session_state.stock_input_df["당일입고예정량"] = edited_stock["당일�
 
 # --- [파트 4] 최적 발주 필요량 계산 및 결과 출력 ---
 st.markdown("---")
-st.subheader("🚀 4. 당일 최적 발주 필요량 결과 (소계, 안전재고비율 산정)")
+st.subheader("🚀 5. 당일 최적 발주 필요량 결과 (소계, 안전재고비율 산정)")
 
 def calculate_row_data(row):
     avg_use = float(row["평균사용량"]) if pd.notnull(row["평균사용량"]) else 0.0
     prev_stock = float(row["전일마감재고"]) if pd.notnull(row["전일마감재고"]) else 0.0
     incoming = float(row["당일입고예정량"]) if pd.notnull(row["당일입고예정량"]) else 0.0
 
-    # 당일 기초재고 = 전일 마감재고 + 당일 입고예정량
     base_stock = prev_stock + incoming
-
-    # 소계(예상 잔여재고) = 당일 기초재고 - (평균사용량 × 리드타임)
     expected_usage = avg_use * days_multiplier
     subtotal_stock = base_stock - expected_usage
     
@@ -214,7 +212,6 @@ def calculate_row_data(row):
     
     safety_stock = expected_usage
     
-    # 안전재고비율 (%) = (소계 / 안전재고) * 100 (안전재고가 0인 경우 0 처리)
     if safety_stock > 0:
         safety_ratio = (subtotal_stock / safety_stock) * 100
     else:
