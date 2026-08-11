@@ -41,9 +41,9 @@ if "stock_input_df" not in st.session_state:
         "납품예정량": [0, 0, 0, 320, 0, 0, 0, 3200, 1920, 1920, 0, 0, 0]
     })
 
-# --- [파트 1] 최근 10일 사용량 키인 표 (상단 배치) ---
+# --- [1번] 상단: 최근 10일 사용량 키인 표 ---
 st.subheader("📝 1. 최근 10일 사용량 키인 (일자별 출고 실적 입력)")
-st.info("이곳에 입력한 최근 10일간의 사용량 데이터를 바탕으로, 아래 대시보드의 **'평균사용량'이 자동 계산**됩니다.")
+st.info("이 표에 입력한 최근 10일간의 사용량 수치가 아래 대시보드의 **'평균사용량' 칸에 자동으로 반영**됩니다.")
 
 edited_10days = st.data_editor(
     st.session_state.recent_10days_df,
@@ -52,14 +52,14 @@ edited_10days = st.data_editor(
 )
 st.session_state.recent_10days_df = edited_10days
 
-# 10일 치 데이터의 행별 평균을 계산하여 자동으로 평균사용량 추출
+# 10일 치 데이터의 행별 평균을 계산하여 평균사용량 데이터 추출
 days_columns = [col for col in edited_10days.columns if col != "구분2"]
 calculated_avg = edited_10days[days_columns].mean(axis=1)
 
 
-# --- [파트 2] 당일 재고 키인 및 최종 발주 대시보드 (하단 배치) ---
+# --- [2번] 하단: 당일 재고 키인 및 최종 발주 대시보드 ---
 st.subheader("🚀 2. 당일 재고 키인 및 최적 발주 필요량 결과 대시보드")
-st.info("아래 표에서 **'현재고량'**과 **'납품예정량'**을 수정하시면, 위에서 계산된 평균사용량과 연동되어 발주량이 즉시 산출됩니다.")
+st.info("아래 표의 **'현재고량'**과 **'납품예정량'**을 수정하시면, 위에서 계산된 평균사용량과 함께 연동되어 발주량이 산출됩니다.")
 
 edited_stock = st.data_editor(
     st.session_state.stock_input_df,
@@ -73,11 +73,11 @@ edited_stock = st.data_editor(
 )
 st.session_state.stock_input_df = edited_stock
 
-# 최종 데이터프레임 조립 (상단 표의 평균 사용량 자동 주입)
+# 최종 대시보드 데이터프레임 구성 (평균사용량 컬럼이 명시적으로 포함됨)
 processed_df = pd.DataFrame({
     "구분2": items_list,
     "입수(PLT)": plt_list,
-    "평균사용량": calculated_avg,  # 자동으로 계산되어 들어간 평균값
+    "평균사용량": calculated_avg,  # 상단 표에서 자동 계산되어 들어온 평균값
     "현재고량": edited_stock["현재고량"],
     "납품예정량": edited_stock["납품예정량"]
 })
@@ -98,7 +98,7 @@ def calculate_order(row):
 processed_df["안전재고(사용량x3)"] = processed_df["평균사용량"] * 3
 processed_df["발주필요량(PLT)"] = processed_df.apply(calculate_order, axis=1)
 
-# 결과 출력 표
+# 최종 결과 표 출력 (평균사용량 칸이 뚜렷하게 보이도록 구성)
 st.dataframe(
     processed_df[["구분2", "입수(PLT)", "평균사용량", "현재고량", "납품예정량", "안전재고(사용량x3)", "발주필요량(PLT)"]]
       .style.format({
