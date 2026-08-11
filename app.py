@@ -21,9 +21,10 @@ plt_list = [300, 210, 210, 320, 2520, 960, 640, 640, 640, 320, 320, 320, 160]
 
 moq_dict = {
     "101": 0, "102": 0, "103": 0,
+    "스타 13호(양곡20kg)": 1920, # 13호 (특수 단위 적용 예정)
     "스타 1호": 7560, "스타 2호": 4800, "스타 3호": 3840, "스타 4호": 3200,
     "스타 5호": 3200, "스타 6호": 1600, "스타 7호": 1600, "스타 8호": 1600,
-    "스타 11호": 1280, "스타 13호(양곡20kg)": 1920
+    "스타 11호": 1280
 }
 
 # --- [상단: 환경 설정] ---
@@ -38,9 +39,8 @@ with col_b:
     target_delivery_date = st.date_input("납품 예정일", value=base_date + timedelta(days=1))
 with col_c:
     auto_order_threshold = st.number_input("MOQ 자동 발주 임계값 (%)", min_value=0, max_value=100, value=80, step=5)
-    st.caption("MOQ 품목이 필요량 N% 이상일 때 자동 발주")
+    st.caption("일반 MOQ 품목 발주 기준%")
 
-# 리드타임 로직: 당일 포함 + 1일
 base_today = datetime.combine(base_date, datetime.min.time())
 days_diff = (target_delivery_date - base_date).days
 days_multiplier = max(1, days_diff + 1) 
@@ -117,36 +117,38 @@ edited_stock = st.data_editor(combined_stock_df, hide_index=True, use_container_
 st.session_state.stock_input_df["전일마감재고"] = edited_stock["전일마감재고"]
 st.session_state.stock_input_df["당일입고예정량"] = edited_stock["당일입고예정량"]
 
-# --- [파트 4: 최적 발주 및 주력상품 예외/안전재고 로직] ---
+# --- [파트 4: 최적 발주 및 품목별 예외 규칙 로직] ---
 st.markdown("---")
 st.subheader("🚀 5. 당일 최적 발주 필요량 결과")
 
 def calculate_row_data(row):
+    item_name = row["구분2"]
     avg_use = float(row["평균사용량"])
     base_stock = float(row["전일마감재고"]) + float(row["당일입고예정량"])
     
-    # 필수 확보: 리드타임(days_multiplier) + 안전버퍼(3일)
     safety_buffer = avg_use * 3
     required_stock = (avg_use * days_multiplier) + safety_buffer
-    
-    # 미발주 시 예상 잔여재고 (리드타임 종료 시점)
     expected_remaining = base_stock - (avg_use * days_multiplier)
-    
-    # 발주 필요량 (안전버퍼까지 고려한 수치)
     needed_qty = max(0.0, required_stock - base_stock)
     
-    item_moq = moq_dict.get(row["구분2"], 0)
+    item_moq = moq_dict.get(item_name, 0)
     
-    # 1. 주력상품(101~103, moq 0) 로직
+    # 1. 주력품목 (101~103)
     if item_moq == 0:
         if needed_qty > 0:
             return pd.Series([base_stock, expected_remaining, needed_qty, 0, float(math.ceil(needed_qty)), "✅ 주력품목 즉시발주"])
         return pd.Series([base_stock, expected_remaining, 0, 0, 0, "발주 불필요"])
     
-    # 2. 일반 MOQ 상품 로직
+    # 2. 스타 13호 전용 예외 규칙 (MOQ 1920 대신 320 단위 소량 발주 가능 반영)
+    if item_name == "스타 13호(양곡20kg)":
+        if needed_qty > 0 or expected_remaining <= safety_buffer:
+            # 320개 단위(배수)로 올림 처리하여 소량 발주 산출
+            order_box = float(math.ceil(max(needed_qty, 1) / 320.0) * 320)
+            return pd.Series([base_stock, expected_remaining, needed_qty, 320, order_box, "📦 13호 소량발주 (320단위)"])
+        return pd.Series([base_stock, expected_remaining, 0, 320, 0, "발주 불필요"])
+
+    # 3. 일반 MOQ 상품 로직
     threshold_qty = item_moq * (auto_order_threshold / 100.0)
-    
-    # 안전버퍼(3일) 위협 시 긴급 발주
     is_critical = expected_remaining <= safety_buffer
     
     if is_critical or needed_qty >= threshold_qty:
@@ -155,6 +157,6 @@ def calculate_row_data(row):
         return pd.Series([base_stock, expected_remaining, needed_qty, item_moq, 0, f"안정 (필요:{int(needed_qty)})"])
 
 result_df = edited_stock.copy()
-result_df[["당일기초재고", "예상잔여", "순수부족량", "기준MOQ", "발주필요량(BOX)", "상태"]] = result_df.apply(calculate_row_data, axis=1)
+result_df[["당일기초재고", "예상잔여", "순수부족량", "적용기준(MOQ/단위)", "발주필요량(BOX)", "상태"]] = result_df.apply(calculate_row_data, axis=1)
 
 st.dataframe(result_df, hide_index=True, use_container_width=True)
