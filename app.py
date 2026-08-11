@@ -25,40 +25,83 @@ moq_dict = {
     "스타 10호": 2400, "스타 11호": 1280, "스타 13호(양곡20kg)": 1920
 }
 
-# --- [상단: 환경 설정 (기준일 + MOQ 발주 기준%)] ---
+# --- [상단: 환경 설정 (기준일 + MOQ 임계값%)] ---
 st.markdown("---")
 st.subheader("⚙️ 발주 자동화 환경 설정")
 
-col_a, col_b, col_c = st.columns([2, 2, 2])
+col_a, col_b, col_c, save_col = st.columns([2, 2, 2, 1])
 
 with col_a:
     base_date = st.date_input("발주 기준일", value=datetime.now().date())
 with col_b:
     target_delivery_date = st.date_input("납품 예정일", value=base_date + timedelta(days=3))
 with col_c:
-    # 0~100 사이의 퍼센트 입력
     auto_order_threshold = st.number_input("MOQ 자동 발주 임계값 (%)", min_value=0, max_value=100, value=80, step=5)
-    st.caption("필요 수량이 MOQ의 N% 이상일 경우 MOQ 수량으로 자동 발주")
+    st.caption("필요량이 MOQ의 N% 이상일 때 자동 발주")
 
 # 날짜 로직
 base_today = datetime.combine(base_date, datetime.min.time())
 days_diff = (target_delivery_date - base_date).days
 days_multiplier = max(1, days_diff)
 
-recent_dates = [(base_today - timedelta(days=i+1)).strftime('%m/%d') for i in range(9, -1, -1)]
+yesterday = base_today - timedelta(days=1)
+recent_dates = [(yesterday - timedelta(days=i)).strftime('%m/%d') for i in range(9, -1, -1)]
 future_dates_obj = [base_today + timedelta(days=i) for i in range(max(7, days_multiplier + 1))]
 future_dates_md = [d.strftime('%m/%d') for d in future_dates_obj]
 
-# ... (이후 데이터 로드 및 초기화 로직은 기존과 동일) ...
+with save_col:
+    st.write("") 
+    st.write("") 
+    if st.button("💾 데이터 저장", use_container_width=True):
+        if "recent_10days_df" in st.session_state and "schedule_df" in st.session_state and "stock_input_df" in st.session_state:
+            save_dict = {
+                "recent_10days": st.session_state.recent_10days_df.to_dict(),
+                "schedule": st.session_state.schedule_df.to_dict(),
+                "stock_input": st.session_state.stock_input_df.to_dict()
+            }
+            df_to_save = pd.DataFrame([save_dict])
+            df_to_save.to_json(SAVE_FILE)
+            st.success("✅ 저장 완료!")
+
+st.info(f"💡 **발주 기준일:** {base_date.strftime('%Y-%m-%d')} | **납품 예정일:** {target_delivery_date.strftime('%Y-%m-%d')} (리드타임 배수: **X {days_multiplier}일**)")
+
+
+# --- [데이터 영구 저장 및 불러오기 기능] ---
+if os.path.exists(SAVE_FILE) and "loaded" not in st.session_state:
+    try:
+        loaded_df = pd.read_json(SAVE_FILE)
+        loaded_dict = loaded_df.iloc[0].to_dict()
+        st.session_state.recent_10days_df = pd.DataFrame(loaded_dict["recent_10days"])
+        st.session_state.schedule_df = pd.DataFrame(loaded_dict["schedule"])
+        if "stock_input" in loaded_dict:
+            st.session_state.stock_input_df = pd.DataFrame(loaded_dict["stock_input"])
+        st.session_state.loaded = True
+    except Exception as e:
+        pass
+
+
+# --- [세션 상태 유지 및 동기화 로직] ---
 if "recent_10days_df" not in st.session_state:
     initial_data = {"구분2": items_list}
     for d_str in recent_dates: initial_data[d_str] = [0] * len(items_list) 
     st.session_state.recent_10days_df = pd.DataFrame(initial_data)
+else:
+    df_old = st.session_state.recent_10days_df
+    new_df = pd.DataFrame({"구분2": items_list})
+    for d_str in recent_dates:
+        new_df[d_str] = df_old[d_str] if d_str in df_old.columns else [0] * len(items_list)
+    st.session_state.recent_10days_df = new_df
 
 if "schedule_df" not in st.session_state:
     sched_data = {"구분2": items_list}
     for f_date in future_dates_md: sched_data[f_date] = [0] * len(items_list)
     st.session_state.schedule_df = pd.DataFrame(sched_data)
+else:
+    df_sched_old = st.session_state.schedule_df
+    new_sched_df = pd.DataFrame({"구분2": items_list})
+    for f_date in future_dates_md:
+        new_sched_df[f_date] = df_sched_old[f_date] if f_date in df_sched_old.columns else [0] * len(items_list)
+    st.session_state.schedule_df = new_sched_df
 
 if "stock_input_df" not in st.session_state or "전일마감재고" not in st.session_state.stock_input_df.columns:
     st.session_state.stock_input_df = pd.DataFrame({
@@ -67,10 +110,85 @@ if "stock_input_df" not in st.session_state or "전일마감재고" not in st.se
         "당일입고예정량": [0] * len(items_list)
     })
 
-# --- [파트 1, 2, 3은 생략 (이전 코드와 동일)] ---
-# (코드 간결화를 위해 생략했지만, 실제 깃허브에는 아래 파트 4 함수만 잘 연동하시면 됩니다.)
 
-# --- [파트 4: 핵심 변경 로직] ---
+# --- [파트 1] 최근 10일 사용량 키인 ---
+st.markdown("---")
+st.subheader("📝 2. 최근 10일 사용량 키인")
+st.info(f"기준일 전날({recent_dates[-1]})까지의 일자별 실적 입력")
+
+col_config_10days = {"구분2": st.column_config.TextColumn("품목", disabled=True)}
+for d_str in recent_dates:
+    col_config_10days[d_str] = st.column_config.NumberColumn(d_str, format="%d")
+
+edited_10days = st.data_editor(
+    st.session_state.recent_10days_df,
+    column_config=col_config_10days,
+    hide_index=True,
+    use_container_width=True,
+    height=420,
+    key="editor_10days"
+)
+st.session_state.recent_10days_df = edited_10days.fillna(0)
+days_columns = [col for col in edited_10days.columns if col != "구분2"]
+calculated_avg = edited_10days[days_columns].fillna(0).mean(axis=1)
+
+
+# --- [파트 2] 향후 입고 예정 스케줄 관리 ---
+st.markdown("---")
+st.subheader("📅 3. 향후 확정 입고 예정 스케줄 관리")
+st.info("이미 발주가 확정되어 입고될 날짜별 수량을 입력하세요.")
+
+col_config_sched = {"구분2": st.column_config.TextColumn("품목", disabled=True)}
+for f_date in future_dates_md:
+    col_config_sched[f_date] = st.column_config.NumberColumn(f"{f_date} 입고", format="%d")
+
+edited_schedule = st.data_editor(
+    st.session_state.schedule_df,
+    column_config=col_config_sched,
+    hide_index=True,
+    use_container_width=True,
+    height=420,
+    key="editor_schedule"
+)
+st.session_state.schedule_df = edited_schedule.fillna(0)
+
+
+# --- [파트 3] 전일 마감 재고 및 당일 입고예정 키인 ---
+st.markdown("---")
+st.subheader("📝 4. 재고 및 당일 입고예정 키인")
+st.info("**전일마감재고**와 **당일입고예정량**을 직접 키인하세요.")
+
+combined_stock_df = pd.DataFrame({
+    "구분2": items_list,
+    "입수(BOX)": plt_list,  
+    "평균사용량": calculated_avg.reset_index(drop=True),  
+    "전일마감재고": st.session_state.stock_input_df["전일마감재고"].fillna(0).reset_index(drop=True),
+    "당일입고예정량": st.session_state.stock_input_df["당일입고예정량"].fillna(0).reset_index(drop=True)
+})
+
+edited_stock = st.data_editor(
+    combined_stock_df,
+    column_config={
+        "구분2": st.column_config.TextColumn("품목", disabled=True),
+        "입수(BOX)": st.column_config.NumberColumn("입수(BOX)", format="%d", disabled=True),
+        "평균사용량": st.column_config.NumberColumn("평균사용량", format="%.1f", disabled=True),
+        "전일마감재고": st.column_config.NumberColumn("전일마감재고 (키인)", format="%d"),
+        "당일입고예정량": st.column_config.NumberColumn("당일입고예정량 (키인)", format="%d"),
+    },
+    hide_index=True,
+    use_container_width=True,
+    height=420,
+    key="editor_stock"
+)
+
+st.session_state.stock_input_df["전일마감재고"] = edited_stock["전일마감재고"].fillna(0)
+st.session_state.stock_input_df["당일입고예정량"] = edited_stock["당일입고예정량"].fillna(0)
+
+
+# --- [파트 4] 최적 발주 필요량 및 임계값 자동 제어 결과 출력 ---
+st.markdown("---")
+st.subheader("🚀 5. 당일 최적 발주 필요량 결과 (MOQ 임계값 자동 반영)")
+
 def calculate_row_data(row):
     item_name = row["구분2"]
     avg_use = float(row["평균사용량"]) if pd.notnull(row["평균사용량"]) else 0.0
@@ -79,23 +197,52 @@ def calculate_row_data(row):
 
     base_stock = prev_stock + incoming
     expected_usage = avg_use * days_multiplier
-    subtotal_stock = max(0, base_stock - expected_usage)
-    needed_qty = max(0, expected_usage - subtotal_stock)
+    subtotal_stock = max(0.0, base_stock - expected_usage)
+    safety_stock = expected_usage
     
+    if safety_stock > 0:
+        safety_ratio = (subtotal_stock / safety_stock) * 100
+    else:
+        safety_ratio = 0.0
+
+    needed_qty = max(0.0, safety_stock - subtotal_stock)
     item_moq = moq_dict.get(item_name, 0)
     
-    # 자동 발주 로직
+    # 임계값(%) 적용 자동 발주 로직
+    threshold_qty = item_moq * (auto_order_threshold / 100.0)
+    
     if needed_qty <= 0:
-        final_order = 0
+        order_box = 0.0
         status = "발주 불필요"
-    elif needed_qty >= (item_moq * (auto_order_threshold / 100)):
-        final_order = item_moq # 임계값 넘으면 MOQ만큼 발주
-        status = "자동 발주 (MOQ 채움)"
+    elif needed_qty >= threshold_qty:
+        order_box = float(item_moq) # 임계값 넘으면 MOQ 수량으로 발주
+        status = f"✅ 자동발주 (MOQ 충족)"
     else:
-        final_order = 0 # 임계값 미달 시 미발주
-        status = f"미달 (필요:{int(needed_qty)} < {auto_order_threshold}%)"
+        order_box = 0.0 # 임계값 미달 시 미발주
+        status = f"⚠️ 미달 (필요:{int(needed_qty)} < 임계치:{int(threshold_qty)})"
         
-    return pd.Series([base_stock, subtotal_stock, item_moq, final_order, status])
+    return pd.Series([base_stock, subtotal_stock, safety_stock, safety_ratio, needed_qty, item_moq, order_box, status])
 
-# result_df 생성 및 출력 (위 함수를 적용하여 출력)
-# ... (이후 데이터프레임 출력 부분도 위 로직을 반영하여 수정) ...
+result_df = edited_stock.copy()
+result_df[["당일기초재고", "미발주_소계", "안전재고", "안전재고비율", "순수부족량", "기준MOQ", "발주필요량(BOX)", "상태"]] = result_df.apply(calculate_row_data, axis=1)
+
+st.dataframe(
+    result_df[["구분2", "입수(BOX)", "평균사용량", "전일마감재고", "당일입고예정량", "당일기초재고", "미발주_소계", "안전재고", "안전재고비율", "순수부족량", "기준MOQ", "발주필요량(BOX)", "상태"]].fillna(0),
+    column_config={
+        "구분2": st.column_config.TextColumn("품목", disabled=True),
+        "입수(BOX)": st.column_config.NumberColumn("입수(BOX)", format="%d", disabled=True),
+        "평균사용량": st.column_config.NumberColumn("예상사용량", format="%.1f", disabled=True),
+        "전일마감재고": st.column_config.NumberColumn("전일마감재고", format="%d", disabled=True),
+        "당일입고예정량": st.column_config.NumberColumn("당일입고예정", format="%d", disabled=True),
+        "당일기초재고": st.column_config.NumberColumn("당일기초재고", format="%.1f", disabled=True),
+        "미발주_소계": st.column_config.NumberColumn("소계 (예상잔여)", format="%.1f", disabled=True),
+        "안전재고": st.column_config.NumberColumn("안전재고", format="%.1f", disabled=True),
+        "안전재고비율": st.column_config.NumberColumn("안전재고비율", format="%.1f%%"),
+        "순수부족량": st.column_config.NumberColumn("순수부족량", format="%.1f", disabled=True),
+        "기준MOQ": st.column_config.NumberColumn("기준 MOQ", format="%d", disabled=True),
+        "발주필요량(BOX)": st.column_config.NumberColumn("발주필요량(BOX)", format="%d", disabled=True),
+        "상태": st.column_config.TextColumn("판단 상태"),
+    },
+    hide_index=True,
+    use_container_width=True,
+)
