@@ -158,7 +158,6 @@ edited_schedule = st.data_editor(
 )
 st.session_state.schedule_df = edited_schedule.fillna(0)
 
-# 당일 입고예정량 추출 안전장치 (길이 오류 원천 차단)
 today_str_md = today.strftime('%m/%d')
 if today_str_md in edited_schedule.columns:
     today_incoming = edited_schedule[today_str_md].fillna(0).reset_index(drop=True)
@@ -171,7 +170,6 @@ st.markdown("---")
 st.subheader("📝 3. 당일 재고 키인")
 st.info(f"현재고를 키인하세요. **'평균사용량'과 '오늘({today.strftime('%m/%d')}) 당일 입고예정량'**이 함께 표시됩니다.")
 
-# 데이터 개수(행 길이)를 정확히 맞추기 위해 reset_index 적용
 combined_stock_df = pd.DataFrame({
     "구분2": items_list,
     "입수(BOX)": plt_list,  
@@ -222,17 +220,38 @@ safety_col_name = f"안전재고(사용량 x {days_multiplier})"
 result_df[safety_col_name] = result_df["평균사용량"] * days_multiplier
 result_df["발주필요량(BOX)"] = result_df.apply(calculate_order, axis=1)
 
+# --- [소계(총합) 행 추가] ---
+summary_row = pd.DataFrame({
+    "구분2": ["📌 총합계 (소계)"],
+    "입수(BOX)": [""],
+    "평균사용량": [result_df["평균사용량"].sum()],
+    "현재고량": [result_df["현재고량"].sum()],
+    "당일입고예정량": [result_df["당일입고예정량"].sum()],
+    safety_col_name: [result_df[safety_col_name].sum()],
+    "발주필요량(BOX)": [result_df["발주필요량(BOX)"].sum()]
+})
+
+display_df = pd.concat([result_df[["구분2", "입수(BOX)", "평균사용량", "현재고량", "당일입고예정량", safety_col_name, "발주필요량(BOX)"]], summary_row], ignore_index=True)
+
 st.dataframe(
-    result_df[["구분2", "입수(BOX)", "평균사용량", "현재고량", "당일입고예정량", safety_col_name, "발주필요량(BOX)"]].fillna(0),
+    display_df.fillna(0),
     column_config={
         "구분2": st.column_config.TextColumn("품목", disabled=True),
-        "입수(BOX)": st.column_config.NumberColumn("입수(BOX)", format="%d", disabled=True),
+        "입수(BOX)": st.column_config.TextColumn("입수(BOX)", disabled=True),
         "평균사용량": st.column_config.NumberColumn("평균사용량", format="%.1f", disabled=True),
-        "현재고량": st.column_config.NumberColumn("현재고량", format="%d", disabled=True),
-        "당일입고예정량": st.column_config.NumberColumn("당일 입고예정", format="%d", disabled=True),
+        "현재고량": st.column_config.NumberColumn("현재고량", format="%,d", disabled=True),
+        "당일입고예정량": st.column_config.NumberColumn("당일 입고예정", format="%,d", disabled=True),
         safety_col_name: st.column_config.NumberColumn("안전재고", format="%.1f", disabled=True),
-        "발주필요량(BOX)": st.column_config.NumberColumn("발주필요량(BOX)", format="%.1f", disabled=True),
+        "발주필요량(BOX)": st.column_config.NumberColumn("발주필요량(BOX)", format="%,d", disabled=True),
     },
     hide_index=True,
     use_container_width=True
 )
+
+# --- [발주 조합 로직 설명 안내 박스] ---
+st.markdown("""
+> 💡 **[발주량 추천 산출 조합 안내]**
+> * **총 가용 자산** = `현재고량` + `당일입고예정량`
+> * **목표 기준선(안전재고)** = `평균사용량` × `배수({days_multiplier}일)`
+> * **조합 공식**: 납품일까지 소모될 예상 물량을 감안했을 때, 목표 안전재고에 미달하는 수량을 계산하여 부족분만큼 **`발주필요량(BOX)`**으로 최종 추천합니다.
+""")
