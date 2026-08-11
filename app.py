@@ -23,6 +23,7 @@ with col_b:
     target_delivery_date = st.date_input("납품 예정일", value=base_date + timedelta(days=1))
 with col_c:
     auto_order_threshold = st.number_input("발주 트리거 기준 (%)", min_value=0, max_value=200, value=80, step=5)
+    st.caption("리드타임 소모량 대비 부족분 기준%")
 
 # --- [날짜 동기화 계산] ---
 base_today = datetime.combine(base_date, datetime.min.time())
@@ -63,7 +64,6 @@ st.session_state.schedule_df = edited_schedule
 st.markdown("---")
 st.subheader("📝 4. 재고 및 당일 입고예정")
 
-# 세션 상태 안전하게 가져오기
 current_prev_stock = st.session_state.stock_input_df["전일마감재고"].tolist() if "전일마감재고" in st.session_state.stock_input_df else [0]*len(items_list)
 current_incoming = st.session_state.stock_input_df["당일입고예정량"].tolist() if "당일입고예정량" in st.session_state.stock_input_df else [0]*len(items_list)
 
@@ -76,14 +76,13 @@ combined_stock_df = pd.DataFrame({
 
 edited_stock = st.data_editor(combined_stock_df.fillna(0), hide_index=True, use_container_width=True, key="ed_stock")
 
-# 수정된 값 세션에 반영
 st.session_state.stock_input_df = pd.DataFrame({
     "구분2": items_list,
     "전일마감재고": edited_stock["전일마감재고"].fillna(0),
     "당일입고예정량": edited_stock["당일입고예정량"].fillna(0)
 })
 
-# --- [파트 5: 최적 발주 계산 및 출력] ---
+# --- [파트 5: 최적 발주 계산 (기초재고 - 리드타임소모량 기준 적용)] ---
 st.markdown("---")
 st.subheader("🚀 5. 당일 최적 발주 필요량 결과")
 
@@ -92,27 +91,36 @@ def calculate_row_data(row):
     base_stock = float(row["전일마감재고"]) + float(row["당일입고예정량"])
     lead_time_usage = avg_use * days_multiplier
     
-    stock_ratio = (base_stock / lead_time_usage * 100.0) if lead_time_usage > 0 else 999.0
-    needed_qty = max(0.0, lead_time_usage - base_stock)
+    # 💡 핵심 수정: 당일 기초재고에서 리드타임 소모량을 뺀 잔여 재고 (음수면 부족 상태)
+    expected_remaining = base_stock - lead_time_usage
+    
+    # 순수 부족량 (모자란 수량)
+    needed_qty = max(0.0, -expected_remaining)
     item_moq = moq_dict.get(row["구분2"], 0)
     
-    if item_moq == 0:
-        if stock_ratio <= auto_order_threshold:
-            return pd.Series([base_stock, lead_time_usage, stock_ratio, needed_qty, 0, float(math.ceil(needed_qty)), "✅ 주력품목 즉시발주"])
-        return pd.Series([base_stock, lead_time_usage, stock_ratio, 0, 0, 0, "발주 불필요"])
-    elif row["구분2"] == "스타 13호(양곡20kg)":
-        if stock_ratio <= auto_order_threshold:
+    # 발주 트리거 판단: 예상 잔여재고가 0 미만이거나 위험 수준일 때
+    # (여기서는 기초재고가 리드타임 소모량보다 부족해지기 시작할 때 발주가 들어가도록 설정)
+    is_shortage = expected_remaining < (lead_time_usage * (auto_order_threshold / 100.0))
+    
+    if item_moq == 0: # 주력품목 (101~103)
+        if is_shortage or needed_qty > 0:
+            return pd.Series([base_stock, lead_time_usage, expected_remaining, needed_qty, 0, float(math.ceil(needed_qty)), "✅ 주력품목 즉시발주"])
+        return pd.Series([base_stock, lead_time_usage, expected_remaining, 0, 0, 0, "발주 불필요"])
+        
+    elif row["구분2"] == "스타 13호(양곡20kg)": # 13호 소량 단위
+        if is_shortage or needed_qty > 0:
             order_box = float(math.ceil(max(needed_qty, 1) / 320.0) * 320)
-            return pd.Series([base_stock, lead_time_usage, stock_ratio, needed_qty, 320, order_box, "📦 13호 소량발주"])
-        return pd.Series([base_stock, lead_time_usage, stock_ratio, 0, 320, 0, "발주 불필요"])
-    else:
-        if stock_ratio <= auto_order_threshold:
-            return pd.Series([base_stock, lead_time_usage, stock_ratio, needed_qty, item_moq, float(item_moq), "🚨 자동발주"])
-        return pd.Series([base_stock, lead_time_usage, stock_ratio, 0, item_moq, 0, "안정"])
+            return pd.Series([base_stock, lead_time_usage, expected_remaining, needed_qty, 320, order_box, "📦 13호 소량발주"])
+        return pd.Series([base_stock, lead_time_usage, expected_remaining, 0, 320, 0, "발주 불필요"])
+        
+    else: # 일반 MOQ 품목
+        if is_shortage:
+            return pd.Series([base_stock, lead_time_usage, expected_remaining, needed_qty, item_moq, float(item_moq), "🚨 자동발주 (MOQ충족)"])
+        return pd.Series([base_stock, lead_time_usage, expected_remaining, 0, item_moq, 0, "안정"])
 
 result_df = edited_stock.copy()
 new_cols = result_df.apply(calculate_row_data, axis=1)
-new_cols.columns = ["당일기초재고", "리드타임소모량", "재고비율(%)", "순수부족량", "기준MOQ", "발주필요량(BOX)", "상태"]
+new_cols.columns = ["당일기초재고", "리드타임소모량", "예상잔여재고", "순수부족량", "기준MOQ", "발주필요량(BOX)", "상태"]
 final_df = pd.concat([result_df, new_cols], axis=1)
 
 st.dataframe(final_df, hide_index=True, use_container_width=True)
