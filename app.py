@@ -29,44 +29,61 @@ base_today = datetime.combine(base_date, datetime.min.time())
 days_diff = (target_delivery_date - base_date).days
 days_multiplier = max(1, days_diff + 1)
 
-# 기준일 변경 시 즉시 반영되는 날짜 리스트
 recent_dates = [(base_today - timedelta(days=i+1)).strftime('%m/%d') for i in range(9, -1, -1)]
 future_dates_md = [(base_today + timedelta(days=i)).strftime('%m/%d') for i in range(7)]
 
-# --- [세션 상태 관리 및 날짜 변경 대응] ---
-# 표 2 날짜 동기화
+# --- [세션 상태 안전 초기화] ---
 if "recent_10days_df" not in st.session_state or list(st.session_state.recent_10days_df.columns[1:]) != recent_dates:
     st.session_state.recent_10days_df = pd.DataFrame({"구분2": items_list, **{d: [0]*len(items_list) for d in recent_dates}})
 
-# 표 3 날짜 동기화
 if "schedule_df" not in st.session_state or list(st.session_state.schedule_df.columns[1:]) != future_dates_md:
     st.session_state.schedule_df = pd.DataFrame({"구분2": items_list, **{d: [0]*len(items_list) for d in future_dates_md}})
 
-if "stock_input_df" not in st.session_state:
-    st.session_state.stock_input_df = pd.DataFrame({"구분2": items_list, "전일마감재고": [0]*len(items_list), "당일입고예정량": [0]*len(items_list)})
+if "stock_input_df" not in st.session_state or len(st.session_state.stock_input_df) != len(items_list):
+    st.session_state.stock_input_df = pd.DataFrame({
+        "구분2": items_list,
+        "전일마감재고": [0] * len(items_list),
+        "당일입고예정량": [0] * len(items_list)
+    })
 
-# --- [UI: 키인 데이터 편집] ---
+# --- [UI: 표 2 - 최근 10일 사용량] ---
 st.markdown("---")
 st.subheader("📝 2. 최근 10일 사용량")
-st.session_state.recent_10days_df = st.data_editor(st.session_state.recent_10days_df.fillna(0), hide_index=True, use_container_width=True)
-calculated_avg = st.session_state.recent_10days_df.iloc[:, 1:].fillna(0).mean(axis=1)
+edited_10days = st.data_editor(st.session_state.recent_10days_df.fillna(0), hide_index=True, use_container_width=True, key="ed_10days")
+st.session_state.recent_10days_df = edited_10days
+calculated_avg = edited_10days.iloc[:, 1:].apply(pd.to_numeric, errors='coerce').fillna(0).mean(axis=1)
 
+# --- [UI: 표 3 - 향후 입고 예정] ---
 st.markdown("---")
 st.subheader("📅 3. 향후 확정 입고 예정")
-st.session_state.schedule_df = st.data_editor(st.session_state.schedule_df.fillna(0), hide_index=True, use_container_width=True)
+edited_schedule = st.data_editor(st.session_state.schedule_df.fillna(0), hide_index=True, use_container_width=True, key="ed_schedule")
+st.session_state.schedule_df = edited_schedule
 
+# --- [UI: 표 4 - 재고 및 당일 입고예정] ---
 st.markdown("---")
 st.subheader("📝 4. 재고 및 당일 입고예정")
-combined_stock_df = pd.DataFrame({
-    "구분2": items_list, "평균사용량": calculated_avg,
-    "전일마감재고": st.session_state.stock_input_df["전일마감재고"].fillna(0),
-    "당일입고예정량": st.session_state.stock_input_df["당일입고예정량"].fillna(0)
-})
-edited_stock = st.data_editor(combined_stock_df, hide_index=True, use_container_width=True)
-st.session_state.stock_input_df["전일마감재고"] = edited_stock["전일마감재고"].fillna(0)
-st.session_state.stock_input_df["당일입고예정량"] = edited_stock["당일입고예정량"].fillna(0)
 
-# --- [파트 5: 최적 발주 계산] ---
+# 세션 상태 안전하게 가져오기
+current_prev_stock = st.session_state.stock_input_df["전일마감재고"].tolist() if "전일마감재고" in st.session_state.stock_input_df else [0]*len(items_list)
+current_incoming = st.session_state.stock_input_df["당일입고예정량"].tolist() if "당일입고예정량" in st.session_state.stock_input_df else [0]*len(items_list)
+
+combined_stock_df = pd.DataFrame({
+    "구분2": items_list, 
+    "평균사용량": calculated_avg.values,
+    "전일마감재고": current_prev_stock[:len(items_list)],
+    "당일입고예정량": current_incoming[:len(items_list)]
+})
+
+edited_stock = st.data_editor(combined_stock_df.fillna(0), hide_index=True, use_container_width=True, key="ed_stock")
+
+# 수정된 값 세션에 반영
+st.session_state.stock_input_df = pd.DataFrame({
+    "구분2": items_list,
+    "전일마감재고": edited_stock["전일마감재고"].fillna(0),
+    "당일입고예정량": edited_stock["당일입고예정량"].fillna(0)
+})
+
+# --- [파트 5: 최적 발주 계산 및 출력] ---
 st.markdown("---")
 st.subheader("🚀 5. 당일 최적 발주 필요량 결과")
 
