@@ -40,10 +40,10 @@ with col_c:
     auto_order_threshold = st.number_input("MOQ 자동 발주 임계값 (%)", min_value=0, max_value=100, value=80, step=5)
     st.caption("MOQ 품목이 필요량 N% 이상일 때 자동 발주")
 
-# 리드타임 로직: 당일 포함을 위해 +1 적용
+# 리드타임 로직: 당일 포함 + 1일
 base_today = datetime.combine(base_date, datetime.min.time())
 days_diff = (target_delivery_date - base_date).days
-days_multiplier = max(1, days_diff + 1) # 당일 포함 2일 확보
+days_multiplier = max(1, days_diff + 1) 
 
 yesterday = base_today - timedelta(days=1)
 recent_dates = [(yesterday - timedelta(days=i)).strftime('%m/%d') for i in range(9, -1, -1)]
@@ -64,9 +64,9 @@ with save_col:
             df_to_save.to_json(SAVE_FILE)
             st.success("✅ 저장 완료!")
 
-st.info(f"💡 **발주 기준일:** {base_date.strftime('%Y-%m-%d')} | **납품 예정일:** {target_delivery_date.strftime('%Y-%m-%d')} | **재고 확보일수:** {days_multiplier}일 (당일 포함)")
+st.info(f"💡 **발주 기준일:** {base_date.strftime('%Y-%m-%d')} | **납품 예정일:** {target_delivery_date.strftime('%Y-%m-%d')} | **재고 확보:** {days_multiplier}일(리드) + 3일(안전버퍼)")
 
-# --- [데이터 영구 저장 및 불러오기 로직] ---
+# --- [데이터 저장/로드 로직] ---
 if os.path.exists(SAVE_FILE) and "loaded" not in st.session_state:
     try:
         loaded_df = pd.read_json(SAVE_FILE)
@@ -96,12 +96,11 @@ if "stock_input_df" not in st.session_state or "전일마감재고" not in st.se
         "당일입고예정량": [0] * len(items_list)
     })
 
-# --- [파트 1 ~ 3: UI 구성] ---
+# --- [UI: 사용량, 스케줄, 재고 입력] ---
 st.markdown("---")
 st.subheader("📝 2. 최근 10일 사용량 키인")
-edited_10days = st.data_editor(st.session_state.recent_10days_df, hide_index=True, use_container_width=True)
-st.session_state.recent_10days_df = edited_10days
-calculated_avg = edited_10days[[col for col in edited_10days.columns if col != "구분2"]].mean(axis=1)
+st.session_state.recent_10days_df = st.data_editor(st.session_state.recent_10days_df, hide_index=True, use_container_width=True)
+calculated_avg = st.session_state.recent_10days_df[[col for col in st.session_state.recent_10days_df.columns if col != "구분2"]].mean(axis=1)
 
 st.markdown("---")
 st.subheader("📅 3. 향후 확정 입고 예정 스케줄")
@@ -118,35 +117,44 @@ edited_stock = st.data_editor(combined_stock_df, hide_index=True, use_container_
 st.session_state.stock_input_df["전일마감재고"] = edited_stock["전일마감재고"]
 st.session_state.stock_input_df["당일입고예정량"] = edited_stock["당일입고예정량"]
 
-# --- [파트 4: 최적 발주 및 주력상품 예외 로직] ---
+# --- [파트 4: 최적 발주 및 주력상품 예외/안전재고 로직] ---
 st.markdown("---")
 st.subheader("🚀 5. 당일 최적 발주 필요량 결과")
 
 def calculate_row_data(row):
-    item_name = row["구분2"]
     avg_use = float(row["평균사용량"])
-    prev_stock = float(row["전일마감재고"])
-    incoming = float(row["당일입고예정량"])
+    base_stock = float(row["전일마감재고"]) + float(row["당일입고예정량"])
     
-    needed_qty = max(0.0, (avg_use * days_multiplier) - (prev_stock + incoming))
-    item_moq = moq_dict.get(item_name, 0)
+    # 필수 확보: 리드타임(days_multiplier) + 안전버퍼(3일)
+    safety_buffer = avg_use * 3
+    required_stock = (avg_use * days_multiplier) + safety_buffer
+    
+    # 미발주 시 예상 잔여재고 (리드타임 종료 시점)
+    expected_remaining = base_stock - (avg_use * days_multiplier)
+    
+    # 발주 필요량 (안전버퍼까지 고려한 수치)
+    needed_qty = max(0.0, required_stock - base_stock)
+    
+    item_moq = moq_dict.get(row["구분2"], 0)
     
     # 1. 주력상품(101~103, moq 0) 로직
     if item_moq == 0:
         if needed_qty > 0:
-            return pd.Series([needed_qty, 0, float(math.ceil(needed_qty)), "✅ 주력품목 (즉시발주)"])
-        return pd.Series([0, 0, 0, "발주 불필요"])
+            return pd.Series([base_stock, expected_remaining, needed_qty, 0, float(math.ceil(needed_qty)), "✅ 주력품목 즉시발주"])
+        return pd.Series([base_stock, expected_remaining, 0, 0, 0, "발주 불필요"])
     
     # 2. 일반 MOQ 상품 로직
     threshold_qty = item_moq * (auto_order_threshold / 100.0)
-    if needed_qty <= 0:
-        return pd.Series([0, item_moq, 0, "발주 불필요"])
-    elif needed_qty >= threshold_qty:
-        return pd.Series([needed_qty, item_moq, float(item_moq), "✅ 자동발주 (MOQ 충족)"])
+    
+    # 안전버퍼(3일) 위협 시 긴급 발주
+    is_critical = expected_remaining <= safety_buffer
+    
+    if is_critical or needed_qty >= threshold_qty:
+        return pd.Series([base_stock, expected_remaining, needed_qty, item_moq, float(item_moq), "🚨 긴급/자동발주 (MOQ충족)"])
     else:
-        return pd.Series([needed_qty, item_moq, 0, f"⚠️ 미달 ({int(needed_qty)} < {int(threshold_qty)})"])
+        return pd.Series([base_stock, expected_remaining, needed_qty, item_moq, 0, f"안정 (필요:{int(needed_qty)})"])
 
 result_df = edited_stock.copy()
-result_df[["필요수량", "기준MOQ", "발주필요량(BOX)", "상태"]] = result_df.apply(calculate_row_data, axis=1)
+result_df[["당일기초재고", "예상잔여", "순수부족량", "기준MOQ", "발주필요량(BOX)", "상태"]] = result_df.apply(calculate_row_data, axis=1)
 
 st.dataframe(result_df, hide_index=True, use_container_width=True)
