@@ -26,9 +26,8 @@ items_list = [
 ]
 plt_list = [300, 210, 210, 320, 2520, 960, 640, 640, 640, 320, 320, 320, 160]
 
-# --- [세션 상태 유지 및 날짜 자동 갱신 로직] ---
+# --- [세션 상태 유지 및 데이터 동기화 로직] ---
 
-current_10days_cols = ["구분2"] + recent_dates
 if "recent_10days_df" not in st.session_state:
     initial_data = {"구분2": items_list}
     for d_str in recent_dates:
@@ -44,7 +43,6 @@ else:
             new_df[d_str] = [100] * len(items_list)
     st.session_state.recent_10days_df = new_df
 
-current_sched_cols = ["구분2"] + future_dates_md
 if "schedule_df" not in st.session_state:
     sched_data = {"구분2": items_list}
     for f_date in future_dates_md:
@@ -78,11 +76,9 @@ with st.form("date_form"):
 
 try:
     target_date = datetime.strptime(target_delivery_date_str.strip(), "%Y-%m-%d")
-    target_date_str_md = target_date.strftime('%m/%d') 
     days_diff = (target_date.date() - today.date()).days
     days_multiplier = max(1, days_diff)
 except ValueError:
-    target_date_str_md = ""
     days_multiplier = 3
 
 st.info(f"💡 설정된 납품일: **{target_delivery_date_str}** (안전재고 배수: **X {days_multiplier}**)")
@@ -130,23 +126,25 @@ edited_schedule = st.data_editor(
 )
 st.session_state.schedule_df = edited_schedule
 
-if target_date_str_md in edited_schedule.columns:
-    specific_incoming = edited_schedule[target_date_str_md].fillna(0)
+# [핵심 수정] 납품일 기준이 아니라, '오늘(today)' 날짜에 해당하는 입고 예정량을 가져옴!
+today_str_md = today.strftime('%m/%d')
+if today_str_md in edited_schedule.columns:
+    today_incoming = edited_schedule[today_str_md].fillna(0)
 else:
-    specific_incoming = pd.Series([0] * len(items_list))
+    today_incoming = pd.Series([0] * len(items_list))
 
 
 # --- [파트 3] 당일 재고 키인 ---
 st.markdown("---")
 st.subheader("📝 3. 당일 재고 키인")
-st.info(f"현재고를 키인하세요. **'평균사용량'과 선택하신 납품일({target_delivery_date_str})의 '입고예정량'**이 함께 표시됩니다.")
+st.info(f"현재고를 키인하세요. **'평균사용량'과 '오늘({today.strftime('%m/%d')}) 당일 입고예정량'**이 함께 표시됩니다.")
 
 combined_stock_df = pd.DataFrame({
     "구분2": items_list,
-    "입수(BOX)": plt_list,  # 명칭을 직관적으로 박스 단위임을 표현
+    "입수(BOX)": plt_list,  
     "평균사용량": calculated_avg,  
     "현재고량": st.session_state.stock_input_df["현재고량"],
-    "납품예정량(해당일)": specific_incoming  
+    "당일입고예정량": today_incoming  # <-- 오늘 당일 입고예정으로 명칭 및 데이터 변경
 })
 
 edited_stock = st.data_editor(
@@ -156,7 +154,7 @@ edited_stock = st.data_editor(
         "입수(BOX)": st.column_config.NumberColumn("입수(BOX)", format="%d", disabled=True),
         "평균사용량": st.column_config.NumberColumn("평균사용량", format="%.1f", disabled=True),
         "현재고량": st.column_config.NumberColumn("현재고량 (키인)", format="%d"),
-        "납품예정량(해당일)": st.column_config.NumberColumn("해당일 납품예정", format="%d", disabled=True),
+        "당일입고예정량": st.column_config.NumberColumn("당일 입고예정", format="%d", disabled=True),
     },
     hide_index=True,
     use_container_width=True,
@@ -167,14 +165,14 @@ edited_stock = st.data_editor(
 st.session_state.stock_input_df["현재고량"] = edited_stock["현재고량"]
 
 
-# --- [파트 4] 최적 발주 필요량 계산 및 결과 출력 (박스 단위 통일) ---
+# --- [파트 4] 최적 발주 필요량 계산 및 결과 출력 ---
 st.markdown("---")
 st.subheader("🚀 4. 당일 최적 발주 필요량 결과")
 
 def calculate_order(row):
     avg_use = float(row["평균사용량"]) if pd.notnull(row["평균사용량"]) else 0.0
     curr_stock = float(row["현재고량"]) if pd.notnull(row["현재고량"]) else 0.0
-    incoming = float(row["납품예정량(해당일)"]) if pd.notnull(row["납품예정량(해당일)"]) else 0.0
+    incoming = float(row["당일입고예정량"]) if pd.notnull(row["당일입고예정량"]) else 0.0
 
     safety_stock = avg_use * days_multiplier
     base_stock = curr_stock + incoming
@@ -184,22 +182,21 @@ def calculate_order(row):
     if needed_qty <= 0:
         return 0.0
     else:
-        # 박스(BOX) 단위로 그대로 필요량 반환
         return float(math.ceil(needed_qty))
 
 result_df = edited_stock.copy()
 safety_col_name = f"안전재고(사용량 x {days_multiplier})"
 result_df[safety_col_name] = result_df["평균사용량"] * days_multiplier
-result_df["발주필요량(BOX)"] = result_df.apply(calculate_order, axis=1)  # 단위 박스로 변경
+result_df["발주필요량(BOX)"] = result_df.apply(calculate_order, axis=1)
 
 st.dataframe(
-    result_df[["구분2", "입수(BOX)", "평균사용량", "현재고량", "납품예정량(해당일)", safety_col_name, "발주필요량(BOX)"]],
+    result_df[["구분2", "입수(BOX)", "평균사용량", "현재고량", "당일입고예정량", safety_col_name, "발주필요량(BOX)"]],
     column_config={
         "구분2": st.column_config.TextColumn("품목", disabled=True),
         "입수(BOX)": st.column_config.NumberColumn("입수(BOX)", format="%d", disabled=True),
         "평균사용량": st.column_config.NumberColumn("평균사용량", format="%.1f", disabled=True),
         "현재고량": st.column_config.NumberColumn("현재고량", format="%d", disabled=True),
-        "납품예정량(해당일)": st.column_config.NumberColumn("해당일 납품예정", format="%d", disabled=True),
+        "당일입고예정량": st.column_config.NumberColumn("당일 입고예정", format="%d", disabled=True),
         safety_col_name: st.column_config.NumberColumn("안전재고", format="%.1f", disabled=True),
         "발주필요량(BOX)": st.column_config.NumberColumn("발주필요량(BOX)", format="%.1f", disabled=True),
     },
