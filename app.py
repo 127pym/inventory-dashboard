@@ -6,27 +6,9 @@ import os
 
 st.set_page_config(layout="wide", page_title="물류 자동화 대시보드")
 
-# --- [우상단 배치 레이아웃 구현] ---
-header_col1, header_col2 = st.columns([4, 1])
-
-with header_col1:
-    st.title("📦 물류 재고 및 발주 자동화 대시보드")
+st.title("📦 물류 재고 및 발주 자동화 대시보드")
 
 SAVE_FILE = "inventory_data.json"
-
-# 우상단 컬럼에 저장 버튼 배치
-with header_col2:
-    st.write("") # 수직 정렬 맞춤용 공백
-    if st.button("💾 데이터 저장", use_container_width=True):
-        if "recent_10days_df" in st.session_state and "schedule_df" in st.session_state and "stock_input_df" in st.session_state:
-            save_dict = {
-                "recent_10days": st.session_state.recent_10days_df.to_dict(),
-                "schedule": st.session_state.schedule_df.to_dict(),
-                "stock_input": st.session_state.stock_input_df.to_dict()
-            }
-            df_to_save = pd.DataFrame([save_dict])
-            df_to_save.to_json(SAVE_FILE)
-            st.success("✅ 저장 완료!")
 
 # 1. 오늘 날짜 기준으로 날짜 리스트 자동 갱신 설정
 today = datetime.now()
@@ -99,14 +81,30 @@ if "stock_input_df" not in st.session_state:
     })
 
 
-# --- [납품 예정일 설정] ---
+# --- [납품 예정일 설정 및 저장 버튼 통합 배치 (깨짐 방지)] ---
 st.markdown("---")
-st.subheader("🎯 납품(도착) 예정일 설정")
-with st.form("date_form"):
-    col_d1, col_d2 = st.columns([1, 3])
-    with col_d1:
+st.subheader("🎯 납품(도착) 예정일 설정 및 데이터 관리")
+
+ctrl_col1, ctrl_col2 = st.columns([3, 1])
+
+with ctrl_col1:
+    with st.form("date_form"):
         target_delivery_date_str = st.text_input("납품 예정일 (YYYY-MM-DD)", value=today.strftime('%Y-%m-%d'))
-    submitted = st.form_submit_button("📅 납품일 적용")
+        submitted = st.form_submit_button("📅 납품일 적용")
+
+with ctrl_col2:
+    st.write("") # 간격 맞춤
+    st.write("") 
+    if st.button("💾 현재 입력 데이터 저장", use_container_width=True):
+        if "recent_10days_df" in st.session_state and "schedule_df" in st.session_state and "stock_input_df" in st.session_state:
+            save_dict = {
+                "recent_10days": st.session_state.recent_10days_df.to_dict(),
+                "schedule": st.session_state.schedule_df.to_dict(),
+                "stock_input": st.session_state.stock_input_df.to_dict()
+            }
+            df_to_save = pd.DataFrame([save_dict])
+            df_to_save.to_json(SAVE_FILE)
+            st.success("✅ 저장 완료!")
 
 try:
     target_date = datetime.strptime(target_delivery_date_str.strip(), "%Y-%m-%d")
