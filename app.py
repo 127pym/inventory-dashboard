@@ -1,11 +1,19 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 
 st.set_page_config(layout="wide", page_title="물류 자동화 대시보드")
 
 st.title("📦 물류 재고 및 발주 자동화 대시보드")
-st.write(f"오늘 날짜: {datetime.now().strftime('%Y-%m-%d')}")
+
+# 1. 오늘 날짜 기준 '어제' 날짜 계산 및 최근 10일 날짜 리스트 생성 (예: M/D 형식)
+today = datetime.now()
+yesterday = today - timedelta(days=1)
+
+# 어제를 기준으로 과거 10일 날짜 생성 (오름차순: 과거 -> 어제)
+recent_dates = [(yesterday - timedelta(days=i)).strftime('%m/%d') for i in range(9, -1, -1)]
+
+st.write(f"오늘 날짜: {today.strftime('%Y-%m-%d')} (집계 기준: {recent_dates[0]} ~ {recent_dates[-1]})")
 
 # 품목 리스트 및 기본 입수 정보
 items_list = [
@@ -16,13 +24,24 @@ items_list = [
 ]
 plt_list = [300, 210, 210, 320, 2520, 960, 640, 640, 640, 320, 320, 320, 160]
 
-# 세션 상태 초기화 (최근 10일 사용량 키인 표)
+# 세션 상태 초기화 (최근 10일 사용량 키인 표 - 날짜 컬럼을 동적으로 적용)
 if "recent_10days_df" not in st.session_state:
-    days_cols = [f"D-{i}" for i in range(10, 0, -1)]
     initial_data = {"구분2": items_list}
-    for col in days_cols:
-        initial_data[col] = [100] * len(items_list) 
+    for d_str in recent_dates:
+        initial_data[d_str] = [100] * len(items_list) 
     st.session_state.recent_10days_df = pd.DataFrame(initial_data)
+else:
+    # 날짜가 바뀌어 컬럼이 달라졌을 경우 기존 품목 유지하며 날짜 컬럼만 최신화
+    current_cols = ["구분2"] + recent_dates
+    # 만약 기존 세션의 컬럼과 오늘 기준 컬럼이 다르면 갱신
+    if list(st.session_state.recent_10days_df.columns) != current_cols:
+        new_df = pd.DataFrame({"구분2": items_list})
+        for d_str in recent_dates:
+            if d_str in st.session_state.recent_10days_df.columns:
+                new_df[d_str] = st.session_state.recent_10days_df[d_str]
+            else:
+                new_df[d_str] = [100] * len(items_list)
+        st.session_state.recent_10days_df = new_df
 
 # 세션 상태 초기화 (당일 재고 키인 표)
 if "stock_input_df" not in st.session_state:
@@ -32,12 +51,12 @@ if "stock_input_df" not in st.session_state:
         "납품예정량": [0, 0, 0, 320, 0, 0, 0, 3200, 1920, 1920, 0, 0, 0]
     })
 
-# --- 화면을 좌우 2개의 열(Columns)로 분할하여 스크롤 없이 한눈에 배치 ---
+# --- 화면 좌우 2분할 배치 ---
 col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("📝 1. 최근 10일 사용량 키인")
-    st.info("일자별 실적 입력 (좌우로 스크롤하여 일자 확인)")
+    st.info(f"어제({recent_dates[-1]})까지의 일자별 실적 입력 (M/D 자동 갱신)")
 
     edited_10days = st.data_editor(
         st.session_state.recent_10days_df,
@@ -55,11 +74,10 @@ with col2:
     st.subheader("📝 2. 당일 재고 키인")
     st.info("현재고/납품예정량 키인 + 평균사용량 자동 연동")
 
-    # 당일 재고 데이터프레임에 계산된 평균사용량 열을 병합
     combined_stock_df = pd.DataFrame({
         "구분2": items_list,
         "입수(PLT)": plt_list,
-        "평균사용량": calculated_avg,  # 2번 표 안에 열로 추가됨
+        "평균사용량": calculated_avg,  # 자동 연동된 평균값
         "현재고량": st.session_state.stock_input_df["현재고량"],
         "납품예정량": st.session_state.stock_input_df["납품예정량"]
     })
@@ -78,11 +96,10 @@ with col2:
         height=520
     )
 
-    # 사용자가 수정한 현재고/납품예정량 상태 동기화
     st.session_state.stock_input_df["현재고량"] = edited_stock["현재고량"]
     st.session_state.stock_input_df["납품예정량"] = edited_stock["납품예정량"]
 
-# --- [구조 3] 최적 발주 필요량 (고민 중인 단계) ---
+# --- [구조 3] 최적 발주 필요량 ---
 st.markdown("---")
 st.subheader("🚀 3. 최적 발주 필요량")
 st.info("💡 이 부분은 추후 로직을 함께 고민하면서 구현해 나갈 수 있도록 비워두었습니다.")
