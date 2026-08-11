@@ -10,7 +10,7 @@ st.title("📦 물류 재고 및 발주 자동화 대시보드")
 today = datetime.now()
 yesterday = today - timedelta(days=1)
 recent_dates = [(yesterday - timedelta(days=i)).strftime('%m/%d') for i in range(9, -1, -1)]
-future_dates = [(today + timedelta(days=i)).strftime('%m/%d') for i in range(5)]
+future_dates = [(today + timedelta(days=i)).strftime('%m/%d') for i in range(7)]  # 넉넉하게 7일치 스케줄 확보
 
 st.write(f"오늘 날짜: {today.strftime('%Y-%m-%d')} (사용량 기본 집계: {recent_dates[0]} ~ {recent_dates[-1]})")
 
@@ -45,7 +45,30 @@ if "stock_input_df" not in st.session_state:
     })
 
 
+# --- [파트 4를 먼저 배치 또는 폼으로 납품일 먼저 파악] ---
+# 납품 예정일에 따른 '해당일자 입고량'을 3번 표에 반영하기 위해 납품일 입력을 상단으로 올리거나 폼으로 처리합니다.
+st.markdown("---")
+st.subheader("🎯 납품(도착) 예정일 설정")
+with st.form("date_form"):
+    col_d1, col_d2 = st.columns([1, 3])
+    with col_d1:
+        target_delivery_date_str = st.text_input("납품 예정일", value=today.strftime('%Y-%m-%d'))
+    submitted = st.form_submit_button("📅 납품일 적용")
+
+try:
+    target_date = datetime.strptime(target_delivery_date_str.strip(), "%Y-%m-%d")
+    target_date_str_md = target_date.strftime('%m/%d') # 예: "08/11" 형태로 스케줄 표 컬럼과 매칭
+    days_diff = (target_date.date() - today.date()).days
+    days_multiplier = max(1, days_diff)
+except ValueError:
+    target_date_str_md = ""
+    days_multiplier = 3
+
+st.info(f"💡 설정된 납품일: **{target_delivery_date_str}** (안전재고 배수: **X {days_multiplier}**)")
+
+
 # --- [파트 1] 최근 10일 사용량 키인 ---
+st.markdown("---")
 st.subheader("📝 1. 최근 10일 사용량 키인")
 st.info(f"어제({recent_dates[-1]})까지의 일자별 실적 입력")
 
@@ -86,21 +109,25 @@ edited_schedule = st.data_editor(
 )
 st.session_state.schedule_df = edited_schedule
 
-lead_time_days_to_sum = future_dates[:3] 
-auto_incoming = edited_schedule[lead_time_days_to_sum].sum(axis=1)
+# [핵심 변경] 사용자가 선택한 '특정 납품일(target_date_str_md)'에 해당하는 입고량만 정확히 쏙 뽑아냄
+if target_date_str_md in edited_schedule.columns:
+    specific_incoming = edited_schedule[target_date_str_md]
+else:
+    # 만약 스케줄 표 범위에 없는 날짜면 0으로 처리
+    specific_incoming = pd.Series([0] * len(items_list))
 
 
 # --- [파트 3] 당일 재고 키인 ---
 st.markdown("---")
 st.subheader("📝 3. 당일 재고 키인")
-st.info("현재고를 키인하세요. **'평균사용량'과 '납품예정량(확정 스케줄 자동 연동)'**이 함께 표시됩니다.")
+st.info(f"현재고를 키인하세요. **'평균사용량'과 선택하신 납품일({target_delivery_date_str})의 '입고예정량'**이 함께 표시됩니다.")
 
 combined_stock_df = pd.DataFrame({
     "구분2": items_list,
     "입수(PLT)": plt_list,
     "평균사용량": calculated_avg,  
     "현재고량": st.session_state.stock_input_df["현재고량"],
-    "납품예정량(확정연동)": auto_incoming  
+    f"납품예정량({target_delivery_date_str})": specific_incoming  # <-- 해당일자 입고량만 매칭!
 })
 
 edited_stock = st.data_editor(
@@ -110,7 +137,7 @@ edited_stock = st.data_editor(
         "입수(PLT)": st.column_config.NumberColumn("입수(PLT)", disabled=True),
         "평균사용량": st.column_config.NumberColumn("평균사용량", format="%.1f", disabled=True),
         "현재고량": st.column_config.NumberColumn("현재고량 (키인)", format="%d"),
-        "납품예정량(확정연동)": st.column_config.NumberColumn("납품예정량 (스케줄 연동)", format="%d", disabled=True),
+        f"납품예정량({target_delivery_date_str})": st.column_config.NumberColumn("해당일 입고예정", format="%d", disabled=True),
     },
     hide_index=True,
     use_container_width=True,
@@ -121,30 +148,13 @@ edited_stock = st.data_editor(
 st.session_state.stock_input_df["현재고량"] = edited_stock["현재고량"]
 
 
-# --- [파트 4] 최적 발주 필요량 계산 및 결과 출력 (폼 적용으로 에러 차단) ---
+# --- [파트 4] 최적 발주 필요량 계산 및 결과 출력 ---
 st.markdown("---")
 st.subheader("🚀 4. 당일 최적 발주 필요량 결과")
 
-# st.form을 사용하여 텍스트 입력 시 화면이 매번 깜빡이며 DOM 충돌을 일으키는 현상 방지
-with st.form("calc_form"):
-    col_d1, col_d2 = st.columns([1, 3])
-    with col_d1:
-        target_delivery_date_str = st.text_input("🎯 납품(도착) 예정일", value=today.strftime('%Y-%m-%d'))
-    
-    submitted = st.form_submit_button("🔄 발주량 계산 적용")
-
-try:
-    target_date = datetime.strptime(target_delivery_date_str.strip(), "%Y-%m-%d")
-    days_diff = (target_date.date() - today.date()).days
-    days_multiplier = max(1, days_diff)
-except ValueError:
-    days_multiplier = 3
-
-st.info(f"💡 설정된 납품일({target_delivery_date_str}) 기준, 안전재고 및 소모량 계산 배수: **X {days_multiplier}** 적용 중")
-
 def calculate_order(row):
     safety_stock = row["평균사용량"] * days_multiplier
-    base_stock = row["현재고량"] + row["납품예정량(확정연동)"]
+    base_stock = row["현재고량"] + row[f"납품예정량({target_delivery_date_str})"]
     expected_stock = base_stock - (row["평균사용량"] * days_multiplier)
     needed_qty = safety_stock - expected_stock
     
@@ -161,13 +171,13 @@ result_df[safety_col_name] = result_df["평균사용량"] * days_multiplier
 result_df["발주필요량(PLT)"] = result_df.apply(calculate_order, axis=1)
 
 st.dataframe(
-    result_df[["구분2", "입수(PLT)", "평균사용량", "현재고량", "납품예정량(확정연동)", safety_col_name, "발주필요량(PLT)"]],
+    result_df[["구분2", "입수(PLT)", "평균사용량", "현재고량", f"납품예정량({target_delivery_date_str})", safety_col_name, "발주필요량(PLT)"]],
     column_config={
         "구분2": st.column_config.TextColumn("품목", disabled=True),
         "입수(PLT)": st.column_config.NumberColumn("입수(PLT)", format="%d", disabled=True),
         "평균사용량": st.column_config.NumberColumn("평균사용량", format="%.1f", disabled=True),
         "현재고량": st.column_config.NumberColumn("현재고량", format="%d", disabled=True),
-        "납품예정량(확정연동)": st.column_config.NumberColumn("납품예정량", format="%d", disabled=True),
+        f"납품예정량({target_delivery_date_str})": st.column_config.NumberColumn("해당일 납품예정", format="%d", disabled=True),
         safety_col_name: st.column_config.NumberColumn("안전재고", format="%.1f", disabled=True),
         "발주필요량(PLT)": st.column_config.NumberColumn("발주필요량(PLT)", format="%.1f", disabled=True),
     },
