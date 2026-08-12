@@ -1,7 +1,5 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
-import re
 
 st.set_page_config(layout="wide", page_title="물류 재고 관리 대시보드")
 
@@ -43,11 +41,12 @@ if "stock_inputs" not in st.session_state:
 # --- [파일 업로드 및 평균 즉시 계산] ---
 st.markdown("---")
 st.subheader("📁 전일 출고실적 엑셀 업로드 ('5.누적 출고실적RAW')")
-uploaded_file = st.file_uploader("최근 데이터가 포함된 엑셀 파일을 업로드하세요", type=["xlsx", "xls"])
+uploaded_file = st.file_uploader("최근 데이터가 포함된 엑셀 파일을 업로드하세요", type=["xlsx", "xls", "xlsm"])
 
 if uploaded_file is not None:
     try:
-        xls = pd.ExcelFile(uploaded_file)
+        # 💡 openpyxl 엔진 명시하여 파일 포맷 에러 방지
+        xls = pd.ExcelFile(uploaded_file, engine="openpyxl")
         target_sheet = None
         for sheet in xls.sheet_names:
             if "누적 출고실적RAW" in sheet or "5" in sheet:
@@ -57,24 +56,31 @@ if uploaded_file is not None:
         if not target_sheet:
             target_sheet = xls.sheet_names[0]
             
-        raw_df = pd.read_excel(uploaded_file, sheet_name=target_sheet)
-        col_code = raw_df.columns[0]
+        raw_df = pd.read_excel(uploaded_file, sheet_name=target_sheet, engine="openpyxl")
+        
+        # 품목 코드 열(I-01, C-01 등)이 들어있는 열을 유연하게 탐색
+        code_col_idx = 0
+        for idx, col in enumerate(raw_df.columns):
+            # 데이터 샘플 중에 'I-01'이나 'C-01' 같은 패턴이 포함된 열 찾기
+            sample_vals = raw_df.iloc[:20, idx].astype(str).values
+            if any("I-" in v or "C-" in v for v in sample_vals):
+                code_col_idx = idx
+                break
+                
+        col_code = raw_df.columns[code_col_idx]
         
         # 숫자형 컬럼들(일자별 데이터) 추출
         numeric_cols = raw_df.select_dtypes(include=['number']).columns
         
         if len(numeric_cols) >= 10:
-            # 최근 10개 열을 가져와서 평균 계산
             recent_10_cols = numeric_cols[-10:]
             
-            # 각 품목별로 최근 10개 열의 평균을 계산
             avg_dict = {}
-            for idx, row in raw_df.iterrows():
+            for _, row in raw_df.iterrows():
                 code = str(row[col_code]).strip()
                 mean_val = row[recent_10_cols].mean()
                 avg_dict[code] = mean_val
             
-            # 매핑 품목 순서대로 평균값 추출
             new_avgs = []
             for item in items_mapping:
                 k = item["excel_key"]
