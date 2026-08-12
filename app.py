@@ -45,7 +45,7 @@ uploaded_file = st.file_uploader("최근 데이터가 포함된 엑셀 파일을
 
 if uploaded_file is not None:
     try:
-        # 💡 openpyxl 엔진 명시하여 파일 포맷 에러 방지
+        # openpyxl 엔진을 사용하여 시트 목록 읽기
         xls = pd.ExcelFile(uploaded_file, engine="openpyxl")
         target_sheet = None
         for sheet in xls.sheet_names:
@@ -58,18 +58,15 @@ if uploaded_file is not None:
             
         raw_df = pd.read_excel(uploaded_file, sheet_name=target_sheet, engine="openpyxl")
         
-        # 품목 코드 열(I-01, C-01 등)이 들어있는 열을 유연하게 탐색
+        # 품목 코드 열 탐색
         code_col_idx = 0
         for idx, col in enumerate(raw_df.columns):
-            # 데이터 샘플 중에 'I-01'이나 'C-01' 같은 패턴이 포함된 열 찾기
-            sample_vals = raw_df.iloc[:20, idx].astype(str).values
+            sample_vals = raw_df.iloc[:30, idx].astype(str).values
             if any("I-" in v or "C-" in v for v in sample_vals):
                 code_col_idx = idx
                 break
                 
         col_code = raw_df.columns[code_col_idx]
-        
-        # 숫자형 컬럼들(일자별 데이터) 추출
         numeric_cols = raw_df.select_dtypes(include=['number']).columns
         
         if len(numeric_cols) >= 10:
@@ -92,7 +89,7 @@ if uploaded_file is not None:
             st.error("❌ 엑셀 시트에 최근 10일치 이상의 수치 데이터 열이 부족합니다.")
             
     except Exception as e:
-        st.error(f"파일을 처리하는 중 오류가 발생했습니다: {e}")
+        st.error(f"파일 처리 중 오류 발생 (openpyxl 패키지 누락 확인 필요): {e}")
 
 # --- [UI: 사진 1번 표 형태 구현] ---
 st.markdown("---")
@@ -120,7 +117,6 @@ edited_table1 = st.data_editor(
 
 st.session_state.stock_inputs = edited_table1[["구분2", "전일기말재고", "전일입고재고", "전일실사용량", "당일입고예정"]]
 
-# 당일 기초재고 소계 계산: 전일기말재고 + 전일입고재고 - 전일실사용량 + 당일입고예정
 final_base_stock = (
     edited_table1["전일기말재고"] + 
     edited_table1["전일입고재고"] - 
