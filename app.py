@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import io
 
 st.set_page_config(layout="wide", page_title="물류 재고 관리 대시보드")
 
@@ -45,8 +46,11 @@ uploaded_file = st.file_uploader("최근 데이터가 포함된 엑셀 파일을
 
 if uploaded_file is not None:
     try:
-        # openpyxl 엔진을 사용하여 시트 목록 읽기
-        xls = pd.ExcelFile(uploaded_file, engine="openpyxl")
+        # 업로드된 파일을 바이너리 메모리 스트림으로 변환하여 zip 압축 에러 방지
+        bytes_data = uploaded_file.getvalue()
+        excel_buffer = io.BytesIO(bytes_data)
+        
+        xls = pd.ExcelFile(excel_buffer, engine="openpyxl")
         target_sheet = None
         for sheet in xls.sheet_names:
             if "누적 출고실적RAW" in sheet or "5" in sheet:
@@ -56,7 +60,9 @@ if uploaded_file is not None:
         if not target_sheet:
             target_sheet = xls.sheet_names[0]
             
-        raw_df = pd.read_excel(uploaded_file, sheet_name=target_sheet, engine="openpyxl")
+        # 버퍼 포인터 초기화 후 데이터 읽기
+        excel_buffer.seek(0)
+        raw_df = pd.read_excel(excel_buffer, sheet_name=target_sheet, engine="openpyxl")
         
         # 품목 코드 열 탐색
         code_col_idx = 0
@@ -89,7 +95,7 @@ if uploaded_file is not None:
             st.error("❌ 엑셀 시트에 최근 10일치 이상의 수치 데이터 열이 부족합니다.")
             
     except Exception as e:
-        st.error(f"파일 처리 중 오류 발생 (openpyxl 패키지 누락 확인 필요): {e}")
+        st.error(f"파일 처리 중 오류 발생 (requirements.txt에 openpyxl이 포함되어 있는지 확인해주세요): {e}")
 
 # --- [UI: 사진 1번 표 형태 구현] ---
 st.markdown("---")
