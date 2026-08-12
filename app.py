@@ -1,68 +1,127 @@
 import streamlit as st
 import pandas as pd
+from datetime import datetime
+import re
 
 st.set_page_config(layout="wide", page_title="물류 재고 관리 대시보드")
 
-st.title("📋 1. 재고 및 평균 사용량 현황")
+st.title("📋 1. 재고 및 평균 사용량 현황 (엑셀 파일 기반 즉시 산출)")
 
-# --- [기본 품목 데이터 정의 (사진 1번 기준)] ---
-items_data = [
-    {"구분1": "저온", "구분2": "101", "입수": 300, "평균사용량": 1531, "전일기말재고": 13200, "전일입고재고": 0, "전일실사용량": 0, "당일입고예정": 0},
-    {"구분1": "저온", "구분2": "102", "입수": 210, "평균사용량": 4472, "전일기말재고": 17430, "전일입고재고": 0, "전일실사용량": 0, "당일입고예정": 10500},
-    {"구분1": "저온", "구분2": "103", "입수": 210, "평균사용량": 3184, "전일기말재고": 19320, "전일입고재고": 0, "전일실사용량": 0, "당일입고예정": 0},
-    {"구분1": "상온", "구분2": "스타 13호(양곡20kg)", "입수": 320, "평균사용량": 97, "전일기말재고": 160, "전일입고재고": 0, "전일실사용량": 0, "당일입고예정": 320},
-    {"구분1": "상온", "구분2": "스타 1호", "입수": 2520, "평균사용량": 76, "전일기말재고": 3760, "전일입고재고": 0, "전일실사용량": 0, "당일입고예정": 0},
-    {"구분1": "상온", "구분2": "스타 2호", "입수": 960, "평균사용량": 245, "전일기말재고": 3640, "전일입고재고": 0, "전일실사용량": 0, "당일입고예정": 0},
-    {"구분1": "상온", "구분2": "스타 3호", "입수": 640, "평균사용량": 474, "전일기말재고": 5760, "전일입고재고": 0, "전일실사용량": 0, "당일입고예정": 0},
-    {"구분1": "상온", "구분2": "스타 4호", "입수": 640, "평균사용량": 641, "전일기말재고": 4160, "전일입고재고": 0, "전일실사용량": 0, "당일입고예정": 0},
-    {"구분1": "상온", "구분2": "스타 5호", "입수": 640, "평균사용량": 904, "전일기말재고": 8320, "전일입고재고": 0, "전일실사용량": 0, "당일입고예정": 1920},
-    {"구분1": "상온", "구분2": "스타 6호", "입수": 320, "평균사용량": 980, "전일기말재고": 5280, "전일입고재고": 0, "전일실사용량": 0, "당일입고예정": 1920},
-    {"구분1": "상온", "구분2": "스타 7호", "입수": 320, "평균사용량": 10, "전일기말재고": 2240, "전일입고재고": 0, "전일실사용량": 0, "당일입고예정": 0},
-    {"구분1": "상온", "구분2": "스타 8호", "입수": 320, "평균사용량": 125, "전일기말재고": 960, "전일입고재고": 0, "전일실사용량": 0, "당일입고예정": 0},
-    {"구분1": "상온", "구분2": "스타 11호", "입수": 160, "평균사용량": 24, "전일기말재고": 320, "전일입고재고": 0, "전일실사용량": 0, "당일입고예정": 0},
+# --- [기본 품목 및 매핑 정의] ---
+items_mapping = [
+    {"구분1": "저온", "구분2": "101", "excel_key": "I-01", "입수": 300},
+    {"구분1": "저온", "구분2": "102", "excel_key": "I-02", "입수": 210},
+    {"구분1": "저온", "구분2": "103", "excel_key": "I-03", "입수": 210},
+    {"구분1": "상온", "구분2": "스타 13호(양곡20kg)", "excel_key": "C-13", "입수": 320},
+    {"구분1": "상온", "구분2": "스타 1호", "excel_key": "C-01", "입수": 2520},
+    {"구분1": "상온", "구분2": "스타 2호", "excel_key": "C-02", "입수": 960},
+    {"구분1": "상온", "구분2": "스타 3호", "excel_key": "C-03", "입수": 640},
+    {"구분1": "상온", "구분2": "스타 4호", "excel_key": "C-04", "입수": 640},
+    {"구분1": "상온", "구분2": "스타 5호", "excel_key": "C-05", "입수": 640},
+    {"구분1": "상온", "구분2": "스타 6호", "excel_key": "C-06", "입수": 320},
+    {"구분1": "상온", "구분2": "스타 7호", "excel_key": "C-07", "입수": 320},
+    {"구분1": "상온", "구분2": "스타 8호", "excel_key": "C-08", "입수": 320},
+    {"구분1": "상온", "구분2": "스타 11호", "excel_key": "C-11", "입수": 160},
 ]
 
-df_base = pd.DataFrame(items_data)
+items_df_base = pd.DataFrame(items_mapping)
+items_list = items_df_base["구분2"].tolist()
 
 # --- [세션 상태 초기화] ---
-if "table1_df" not in st.session_state:
-    st.session_state.table1_df = df_base.copy()
+if "calculated_avg_series" not in st.session_state:
+    st.session_state.calculated_avg_series = pd.Series([0]*len(items_list), index=items_list)
 
-# --- [데이터 에디터 (입력 가능 영역)] ---
-st.markdown("수치를 직접 수정하거나 키인할 수 있습니다.")
+if "stock_inputs" not in st.session_state:
+    st.session_state.stock_inputs = pd.DataFrame({
+        "구분2": items_list,
+        "전일기말재고": [0]*len(items_list),
+        "전일입고재고": [0]*len(items_list),
+        "전일실사용량": [0]*len(items_list),
+        "당일입고예정": [0]*len(items_list)
+    })
 
-editor_config = {
+# --- [파일 업로드 및 평균 즉시 계산] ---
+st.markdown("---")
+st.subheader("📁 전일 출고실적 엑셀 업로드 ('5.누적 출고실적RAW')")
+uploaded_file = st.file_uploader("최근 데이터가 포함된 엑셀 파일을 업로드하세요", type=["xlsx", "xls"])
+
+if uploaded_file is not None:
+    try:
+        xls = pd.ExcelFile(uploaded_file)
+        target_sheet = None
+        for sheet in xls.sheet_names:
+            if "누적 출고실적RAW" in sheet or "5" in sheet:
+                target_sheet = sheet
+                break
+        
+        if not target_sheet:
+            target_sheet = xls.sheet_names[0]
+            
+        raw_df = pd.read_excel(uploaded_file, sheet_name=target_sheet)
+        col_code = raw_df.columns[0]
+        
+        # 숫자형 컬럼들(일자별 데이터) 추출
+        numeric_cols = raw_df.select_dtypes(include=['number']).columns
+        
+        if len(numeric_cols) >= 10:
+            # 최근 10개 열을 가져와서 평균 계산
+            recent_10_cols = numeric_cols[-10:]
+            
+            # 각 품목별로 최근 10개 열의 평균을 계산
+            avg_dict = {}
+            for idx, row in raw_df.iterrows():
+                code = str(row[col_code]).strip()
+                mean_val = row[recent_10_cols].mean()
+                avg_dict[code] = mean_val
+            
+            # 매핑 품목 순서대로 평균값 추출
+            new_avgs = []
+            for item in items_mapping:
+                k = item["excel_key"]
+                new_avgs.append(avg_dict.get(k, 0))
+            
+            st.session_state.calculated_avg_series = pd.Series(new_avgs, index=items_list)
+            st.success("✅ 엑셀 파일의 최근 10일치 데이터를 기반으로 평균 사용량이 즉시 산출되었습니다!")
+        else:
+            st.error("❌ 엑셀 시트에 최근 10일치 이상의 수치 데이터 열이 부족합니다.")
+            
+    except Exception as e:
+        st.error(f"파일을 처리하는 중 오류가 발생했습니다: {e}")
+
+# --- [UI: 사진 1번 표 형태 구현] ---
+st.markdown("---")
+st.subheader("📋 1. 재고 및 평균 사용량 현황")
+
+stock_df_state = st.session_state.stock_inputs
+merged_base = pd.merge(items_df_base, stock_df_state, on="구분2", how="left").fillna(0)
+merged_base["평균사용량 *최근 10일"] = st.session_state.calculated_avg_series.values.round(0)
+
+editor_columns_config = {
     "구분1": st.column_config.TextColumn(disabled=True),
     "구분2": st.column_config.TextColumn(disabled=True),
+    "excel_key": st.column_config.TextColumn("RAW코드", disabled=True),
     "입수": st.column_config.NumberColumn(disabled=True),
-    "평균사용량": st.column_config.NumberColumn("평균 사용량\n*최근 10일", format="%d"),
-    "전일기말재고": st.column_config.NumberColumn("전일 기말재고", format="%d"),
-    "전일입고재고": st.column_config.NumberColumn("전일 입고재고", format="%d"),
-    "전일실사용량": st.column_config.NumberColumn("전일 실사용량", format="%d"),
-    "당일입고예정": st.column_config.NumberColumn("당일 입고예정", format="%d"),
+    "평균사용량 *최근 10일": st.column_config.NumberColumn(disabled=True),
 }
 
-edited_df = st.data_editor(
-    st.session_state.table1_df,
-    column_config=editor_config,
+edited_table1 = st.data_editor(
+    merged_base[["구분1", "구분2", "excel_key", "입수", "평균사용량 *최근 10일", "전일기말재고", "전일입고재고", "전일실사용량", "당일입고예정"]],
+    column_config=editor_columns_config,
     hide_index=True,
     use_container_width=True,
-    key="table1_edit"
+    key="table1_editor"
 )
 
-# 세션 상태 업데이트
-st.session_state.table1_df = edited_df
+st.session_state.stock_inputs = edited_table1[["구분2", "전일기말재고", "전일입고재고", "전일실사용량", "당일입고예정"]]
 
-# --- [소계 자동 계산 및 결과 테이블 표시] ---
-# 소계 산식: 전일기말재고 + 전일입고재고 - 전일실사용량 + 당일입고예정
-final_df = edited_df.copy()
-final_df["소계"] = (
-    final_df["전일기말재고"] + 
-    final_df["전일입고재고"] - 
-    final_df["전일실사용량"] + 
-    final_df["당일입고예정"]
+# 당일 기초재고 소계 계산: 전일기말재고 + 전일입고재고 - 전일실사용량 + 당일입고예정
+final_base_stock = (
+    edited_table1["전일기말재고"] + 
+    edited_table1["전일입고재고"] - 
+    edited_table1["전일실사용량"] + 
+    edited_table1["당일입고예정"]
 )
 
-st.markdown("---")
-st.subheader("📊 당일 기초재고 소계 결과")
-st.dataframe(final_df, hide_index=True, use_container_width=True)
+result_summary = edited_table1.copy()
+result_summary["당일기초재고 소계"] = final_base_stock
+st.dataframe(result_summary, hide_index=True, use_container_width=True)
