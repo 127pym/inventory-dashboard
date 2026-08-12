@@ -4,9 +4,8 @@ import io
 
 st.set_page_config(layout="wide", page_title="물류 재고 관리 대시보드")
 
-st.title("📋 1. 재고 및 평균 사용량 현황 (엑셀 파일 기반 즉시 산출)")
+st.title("📋 1. 재고 및 평균 사용량 현황 (대용량 엑셀 대응)")
 
-# --- [기본 품목 및 매핑 정의] ---
 items_mapping = [
     {"구분1": "저온", "구분2": "101", "excel_key": "I-01", "입수": 300},
     {"구분1": "저온", "구분2": "102", "excel_key": "I-02", "입수": 210},
@@ -26,7 +25,6 @@ items_mapping = [
 items_df_base = pd.DataFrame(items_mapping)
 items_list = items_df_base["구분2"].tolist()
 
-# --- [세션 상태 초기화] ---
 if "calculated_avg_series" not in st.session_state:
     st.session_state.calculated_avg_series = pd.Series([0]*len(items_list), index=items_list)
 
@@ -39,35 +37,36 @@ if "stock_inputs" not in st.session_state:
         "당일입고예정": [0]*len(items_list)
     })
 
-# --- [파일 업로드 및 평균 즉시 계산] ---
 st.markdown("---")
 st.subheader("📁 전일 출고실적 엑셀 업로드 ('5.누적 출고실적RAW')")
-uploaded_file = st.file_uploader("최근 데이터가 포함된 엑셀 파일을 업로드하세요", type=["xlsx", "xls", "xlsm"])
+uploaded_file = st.file_uploader("35MB 대용량 출고실적 파일을 업로드하세요", type=["xlsx", "xls", "xlsm"])
 
 if uploaded_file is not None:
     try:
-        # 업로드된 파일을 바이너리 메모리 스트림으로 변환하여 zip 압축 에러 방지
         bytes_data = uploaded_file.getvalue()
         excel_buffer = io.BytesIO(bytes_data)
         
-        xls = pd.ExcelFile(excel_buffer, engine="openpyxl")
-        target_sheet = None
-        for sheet in xls.sheet_names:
-            if "누적 출고실적RAW" in sheet or "5" in sheet:
-                target_sheet = sheet
-                break
+        # 💡 대용량/복잡한 서식 파일도 가볍게 읽어내는 calamine 엔진 적용
+        raw_df = None
+        target_sheet = 0 # 기본 첫 번째 시트 또는 이름 지정
         
-        if not target_sheet:
-            target_sheet = xls.sheet_names[0]
-            
-        # 버퍼 포인터 초기화 후 데이터 읽기
-        excel_buffer.seek(0)
-        raw_df = pd.read_excel(excel_buffer, sheet_name=target_sheet, engine="openpyxl")
-        
+        try:
+            xls = pd.ExcelFile(excel_buffer, engine="calamine")
+            for sheet in xls.sheet_names:
+                if "누적 출고실적RAW" in sheet or "5" in sheet:
+                    target_sheet = sheet
+                    break
+            excel_buffer.seek(0)
+            raw_df = pd.read_excel(excel_buffer, sheet_name=target_sheet, engine="calamine")
+        except Exception as inner_e:
+            # 혹시 calamine이 없거나 실패하면 기본 openpyxl 시도
+            excel_buffer.seek(0)
+            raw_df = pd.read_excel(excel_buffer, sheet_name=0, engine="openpyxl")
+
         # 품목 코드 열 탐색
         code_col_idx = 0
         for idx, col in enumerate(raw_df.columns):
-            sample_vals = raw_df.iloc[:30, idx].astype(str).values
+            sample_vals = raw_df.iloc[:40, idx].astype(str).values
             if any("I-" in v or "C-" in v for v in sample_vals):
                 code_col_idx = idx
                 break
@@ -90,12 +89,12 @@ if uploaded_file is not None:
                 new_avgs.append(avg_dict.get(k, 0))
             
             st.session_state.calculated_avg_series = pd.Series(new_avgs, index=items_list)
-            st.success("✅ 엑셀 파일의 최근 10일치 데이터를 기반으로 평균 사용량이 즉시 산출되었습니다!")
+            st.success("✅ 대용량 출고실적 파일에서 최근 10일치 데이터를 성공적으로 읽어와 평균 사용량을 산출했습니다!")
         else:
             st.error("❌ 엑셀 시트에 최근 10일치 이상의 수치 데이터 열이 부족합니다.")
             
     except Exception as e:
-        st.error(f"파일 처리 중 오류 발생 (requirements.txt에 openpyxl이 포함되어 있는지 확인해주세요): {e}")
+        st.error(f"파일 처리 중 오류 발생: {e}")
 
 # --- [UI: 사진 1번 표 형태 구현] ---
 st.markdown("---")
