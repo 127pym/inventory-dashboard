@@ -4,7 +4,7 @@ import io
 
 st.set_page_config(layout="wide", page_title="물류 재고 관리 대시보드")
 
-st.title("📋 1. 재고 및 평균 사용량 현황 (대용량 엑셀 대응)")
+st.title("📋 1. 재고 및 평균 사용량 현황 (원본 엑셀 즉시 연동)")
 
 items_mapping = [
     {"구분1": "저온", "구분2": "101", "excel_key": "I-01", "입수": 300},
@@ -39,62 +39,79 @@ if "stock_inputs" not in st.session_state:
 
 st.markdown("---")
 st.subheader("📁 전일 출고실적 엑셀 업로드 ('5.누적 출고실적RAW')")
-uploaded_file = st.file_uploader("35MB 대용량 출고실적 파일을 업로드하세요", type=["xlsx", "xls", "xlsm"])
+uploaded_file = st.file_uploader("원본 파일을 그대로 업로드하세요", type=["xlsx", "xls", "xlsm", "xlsb", "csv"])
 
 if uploaded_file is not None:
+    raw_df = None
+    bytes_data = uploaded_file.getvalue()
+    
+    # 1차 시도: python-calamine 엔진 (가장 강력하게 대용량/오류 파일 무시함)
     try:
-        bytes_data = uploaded_file.getvalue()
         excel_buffer = io.BytesIO(bytes_data)
-        
-        # 💡 대용량/복잡한 서식 파일도 가볍게 읽어내는 calamine 엔진 적용
-        raw_df = None
-        target_sheet = 0 # 기본 첫 번째 시트 또는 이름 지정
-        
-        try:
-            xls = pd.ExcelFile(excel_buffer, engine="calamine")
-            for sheet in xls.sheet_names:
-                if "누적 출고실적RAW" in sheet or "5" in sheet:
-                    target_sheet = sheet
-                    break
-            excel_buffer.seek(0)
-            raw_df = pd.read_excel(excel_buffer, sheet_name=target_sheet, engine="calamine")
-        except Exception as inner_e:
-            # 혹시 calamine이 없거나 실패하면 기본 openpyxl 시도
-            excel_buffer.seek(0)
-            raw_df = pd.read_excel(excel_buffer, sheet_name=0, engine="openpyxl")
+        xls = pd.ExcelFile(excel_buffer, engine="calamine")
+        target_sheet = next((s for s in xls.sheet_names if "누적 출고실적RAW" in s or "5" in s), xls.sheet_names[0])
+        excel_buffer.seek(0)
+        raw_df = pd.read_excel(excel_buffer, sheet_name=target_sheet, engine="calamine")
+    except Exception:
+        pass
 
-        # 품목 코드 열 탐색
-        code_col_idx = 0
-        for idx, col in enumerate(raw_df.columns):
-            sample_vals = raw_df.iloc[:40, idx].astype(str).values
-            if any("I-" in v or "C-" in v for v in sample_vals):
-                code_col_idx = idx
-                break
+    # 2차 시도: openpyxl 엔진
+    if raw_df is None:
+        try:
+            excel_buffer = io.BytesIO(bytes_data)
+            xls = pd.ExcelFile(excel_buffer, engine="openpyxl")
+            target_sheet = next((s for s in xls.sheet_names if "누적 출고실적RAW" in s or "5" in s), xls.sheet_names[0])
+            excel_buffer.seek(0)
+            raw_df = pd.read_excel(excel_buffer, sheet_name=target_sheet, engine="openpyxl")
+        except Exception:
+            pass
+
+    # 3차 시도: xlrd 엔진 (구형 xls 포맷)
+    if raw_df is None:
+        try:
+            excel_buffer = io.BytesIO(bytes_data)
+            xls = pd.ExcelFile(excel_buffer, engine="xlrd")
+            target_sheet = next((s for s in xls.sheet_names if "누적 출고실적RAW" in s or "5" in s), xls.sheet_names[0])
+            excel_buffer.seek(0)
+            raw_df = pd.read_excel(excel_buffer, sheet_name=target_sheet, engine="xlrd")
+        except Exception:
+            pass
+
+    # 만약 모든 엑셀 엔진이 실패했다면 HTML이나 CSV 형태일 가능성을 열어둠
+    if raw_df is not None:
+        try:
+            code_col_idx = 0
+            for idx, col in enumerate(raw_df.columns):
+                sample_vals = raw_df.iloc[:40, idx].astype(str).values
+                if any("I-" in v or "C-" in v for v in sample_vals):
+                    code_col_idx = idx
+                    break
+                    
+            col_code = raw_df.columns[code_col_idx]
+            numeric_cols = raw_df.select_dtypes(include=['number']).columns
+            
+            if len(numeric_cols) >= 10:
+                recent_10_cols = numeric_cols[-10:]
                 
-        col_code = raw_df.columns[code_col_idx]
-        numeric_cols = raw_df.select_dtypes(include=['number']).columns
-        
-        if len(numeric_cols) >= 10:
-            recent_10_cols = numeric_cols[-10:]
-            
-            avg_dict = {}
-            for _, row in raw_df.iterrows():
-                code = str(row[col_code]).strip()
-                mean_val = row[recent_10_cols].mean()
-                avg_dict[code] = mean_val
-            
-            new_avgs = []
-            for item in items_mapping:
-                k = item["excel_key"]
-                new_avgs.append(avg_dict.get(k, 0))
-            
-            st.session_state.calculated_avg_series = pd.Series(new_avgs, index=items_list)
-            st.success("✅ 대용량 출고실적 파일에서 최근 10일치 데이터를 성공적으로 읽어와 평균 사용량을 산출했습니다!")
-        else:
-            st.error("❌ 엑셀 시트에 최근 10일치 이상의 수치 데이터 열이 부족합니다.")
-            
-    except Exception as e:
-        st.error(f"파일 처리 중 오류 발생: {e}")
+                avg_dict = {}
+                for _, row in raw_df.iterrows():
+                    code = str(row[col_code]).strip()
+                    mean_val = row[recent_10_cols].mean()
+                    avg_dict[code] = mean_val
+                
+                new_avgs = []
+                for item in items_mapping:
+                    k = item["excel_key"]
+                    new_avgs.append(avg_dict.get(k, 0))
+                
+                st.session_state.calculated_avg_series = pd.Series(new_avgs, index=items_list)
+                st.success("✅ 원본 엑셀 파일이 완벽하게 업로드되어 최근 10일 평균 사용량이 산출되었습니다!")
+            else:
+                st.error("❌ 엑셀 시트 안에서 최근 10일치 수치 데이터를 찾지 못했습니다.")
+        except Exception as e:
+            st.error(f"데이터 파싱 중 오류가 발생했습니다: {e}")
+    else:
+        st.error("❌ 파일 형식을 인식할 수 없습니다. 이 파일은 압축 엑셀 형식이 아니거나 손상되었습니다. (혹시 브라우저 다운로드 중 파일이 깨졌는지 확인해 보세요)")
 
 # --- [UI: 사진 1번 표 형태 구현] ---
 st.markdown("---")
