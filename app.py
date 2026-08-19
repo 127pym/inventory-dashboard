@@ -4,71 +4,77 @@ import datetime
 
 st.set_page_config(layout="wide", page_title="물류 재고 및 발주 통합 대시보드")
 
-# --- [고정 틀 1: 품목 데이터 및 구조] ---
-ITEM_LIST = [
-    ("101", "I-01"), ("102", "I-02"), ("103", "I-03"), 
-    ("스타 13호(양곡20kg)", "C-13"), ("스타 1호", "C-01"), ("스타 2호", "C-02"), 
-    ("스타 3호", "C-03"), ("스타 4호", "C-04"), ("스타 5호", "C-05"), 
-    ("스타 6호", "C-06"), ("스타 7호", "C-07"), ("스타 8호", "C-08"), ("스타 11호", "C-11")
-]
+# 1. 컬럼 구조 명확히 정의
+COL_ORDER = ["구분2", "excel_key", "입수(PLT)", "MOQ_PCS", "전일기말재고", "입고예정수량(기간합계)", "전일실사용량"]
 
 if "stock_data" not in st.session_state:
     st.session_state.stock_data = pd.DataFrame({
-        "구분2": [i[0] for i in ITEM_LIST],
-        "excel_key": [i[1] for i in ITEM_LIST],
+        "구분2": ["101", "102", "103", "스타 13호(양곡20kg)", "스타 1호", "스타 2호", "스타 3호", "스타 4호", "스타 5호", "스타 6호", "스타 7호", "스타 8호", "스타 11호"],
+        "excel_key": ["I-01", "I-02", "I-03", "C-13", "C-01", "C-02", "C-03", "C-04", "C-05", "C-06", "C-07", "C-08", "C-11"],
         "입수(PLT)": [300, 210, 210, 320, 2520, 960, 640, 640, 640, 320, 320, 320, 160],
         "MOQ_PCS": [3000, 1890, 1680, 2240, 7560, 5760, 3840, 3840, 3200, 1920, 1600, 1600, 1280],
         "전일기말재고": [20100, 14280, 11760, 320, 2680, 960, 1920, 4160, 3200, 3040, 2080, 800, 160],
-        "입고예정량": [0] * len(ITEM_LIST),
-        "전일실사용량": [0] * len(ITEM_LIST)
+        "입고예정수량(기간합계)": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        "전일실사용량": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     })
 
+if "usage_history" not in st.session_state: st.session_state.usage_history = {}
 if "calculated_result" not in st.session_state: st.session_state.calculated_result = None
 
 st.title("📦 물류 재고 및 발주 통합 대시보드")
 
-# --- [고정 틀 2: 날짜 및 파일 업로드] ---
-today = datetime.date(2026, 8, 19)
-col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
-with col1: order_date = st.date_input("발주 대상일", today)
-with col2: delivery_date = st.date_input("입고 예정일", today + datetime.timedelta(days=6))
-with col3: avg_days = st.number_input("평균 산출 기간(일)", 1, 30, 10)
-with col4: uploaded_file = st.file_uploader("출고일마감 파일 업로드", type=["xlsx", "xls"])
+# 2. 날짜 및 파일 처리
+c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
+with c1: order_date = st.date_input("발주 대상일", datetime.date(2026, 8, 19))
+with c2: delivery_date = st.date_input("입고 예정일", datetime.date(2026, 8, 25))
+with c3: avg_days = st.number_input("평균 산출 기간(일)", 1, 30, 10)
+with c4:
+    file_date = st.date_input("업로드 기준 날짜", datetime.date.today())
+    uploaded_file = st.file_uploader("출고일마감 파일 업로드", type=["xlsx", "xls"])
+
+lead_time_days = max(0, (delivery_date - order_date).days)
 
 if uploaded_file is not None:
     try:
-        # 파일 확장자에 따라 엔진을 자동으로 선택하여 읽기
-        df = pd.read_excel(uploaded_file)
-        if '운송장번호(박스기준)' in df.columns and '박스호수(실제)' in df.columns:
-            pivot = df.drop_duplicates(subset=['운송장번호(박스기준)'])['박스호수(실제)'].value_counts()
+        raw_df = pd.read_excel(uploaded_file)
+        if '운송장번호(박스기준)' in raw_df.columns and '박스호수(실제)' in raw_df.columns:
+            df_dedup = raw_df.drop_duplicates(subset=['운송장번호(박스기준)'])
+            pivot_counts = df_dedup['박스호수(실제)'].value_counts().to_dict()
+            st.session_state.usage_history[file_date.strftime("%Y-%m-%d")] = pivot_counts
             for idx, row in st.session_state.stock_data.iterrows():
-                st.session_state.stock_data.at[idx, "전일실사용량"] = pivot.get(row["excel_key"], 0)
-            st.success("✅ 출고 파일 분석 완료!")
-        else:
-            st.error("❌ 파일에 필요한 컬럼('운송장번호(박스기준)', '박스호수(실제)')이 없습니다.")
-    except Exception as e:
-        st.error(f"❌ 파일 읽기 오류: {e}")
+                st.session_state.stock_data.at[idx, "전일실사용량"] = pivot_counts.get(row["excel_key"], 0)
+            st.success("✅ 집계 완료!")
+    except Exception as e: st.error(f"오류: {e}")
 
-# --- [고정 틀 3: 실시간 데이터 편집기] ---
-st.subheader("📋 재고 및 입고량 입력 (엑셀 복사/붙여넣기 가능)")
+# 3. 평균 계산
+def get_avg():
+    if not st.session_state.usage_history: return [0] * len(st.session_state.stock_data)
+    dts = sorted(st.session_state.usage_history.keys(), reverse=True)[:int(avg_days)]
+    res = []
+    for key in st.session_state.stock_data["excel_key"]:
+        vals = [st.session_state.usage_history[d].get(key, 0) for d in dts]
+        res.append(round(sum(vals)/len(vals), 1))
+    return res
+
+st.session_state.stock_data["평균사용량"] = get_avg()
+
+# 4. 에디터 (입고예정수량(기간합계) 명칭 고정)
 edited_df = st.data_editor(st.session_state.stock_data, num_rows="fixed", use_container_width=True, hide_index=True)
 
-# --- [고정 틀 4: 계산 실행 버튼] ---
+# 5. 계산 실행 (컬럼명 명시적 호출)
 if st.button("🚀 계산 실행", type="primary", use_container_width=True):
-    res = edited_df.copy()
-    lead_time = max(0, (delivery_date - order_date).days)
-    res["안전재고"] = (res["전일실사용량"] / avg_days) * lead_time
-    res["기초재고소계"] = res["전일기말재고"] - res["전일실사용량"] + res["입고예정량"]
-    res["발주필요량"] = res.apply(lambda x: max(0, x["안전재고"] - (x["기초재고소계"] - x["안전재고"])), axis=1)
-    st.session_state.calculated_result = res
+    with st.spinner("⚙️ 계산 중..."):
+        try:
+            res_df = edited_df.copy()
+            res_df["안전재고"] = res_df["평균사용량"] * lead_time_days
+            # 정확한 컬럼명 호출
+            res_df["기초재고소계"] = res_df["전일기말재고"] - res_df["전일실사용량"] + res_df["입고예정수량(기간합계)"]
+            res_df["예상잔여재고"] = res_df["기초재고소계"] - res_df["안전재고"]
+            res_df["발주필요량"] = res_df.apply(lambda x: max(0, x["안전재고"] - x["예상잔여재고"]), axis=1)
+            st.session_state.calculated_result = res_df
+        except Exception as e:
+            st.error(f"계산 오류: {e}. 컬럼명이 일치하는지 확인하세요.")
 
-# --- [고정 틀 5: 계산 결과 고정 영역] ---
-st.markdown("---")
-st.subheader("📊 최종 계산 및 발주 요약")
+# 6. 결과
 if st.session_state.calculated_result is not None:
-    st.dataframe(
-        st.session_state.calculated_result[["구분2", "입수(PLT)", "전일실사용량", "안전재고", "기초재고소계", "발주필요량"]], 
-        use_container_width=True, hide_index=True
-    )
-else:
-    st.info("ℹ️ 데이터를 입력하고 [계산 실행] 버튼을 누르면 여기에 결과가 표시됩니다.")
+    st.dataframe(st.session_state.calculated_result[["구분2", "입수(PLT)", "평균사용량", "안전재고", "기초재고소계", "예상잔여재고", "발주필요량"]], use_container_width=True, hide_index=True)
