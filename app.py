@@ -4,7 +4,7 @@ import datetime
 
 st.set_page_config(layout="wide", page_title="물류 재고 및 발주 통합 대시보드")
 
-# 1. 전체 품목 데이터 및 기본 구조 정의 (이미지 기반 13개 전체 품목 반영)
+# 1. 전체 품목 데이터 및 기본 구조 정의
 if "stock_data" not in st.session_state:
     st.session_state.stock_data = pd.DataFrame({
         "구분2": [
@@ -27,7 +27,7 @@ if "stock_data" not in st.session_state:
         "안전재고": [4353, 12460, 9503, 308, 234, 696, 1323, 1767, 2632, 2685, 25, 265, 60]
     })
 
-st.title("📦 물류 재고 및 발주 통합 대시보드 (전체 품목)")
+st.title("📦 물류 재고 및 발주 통합 대시보드 (키인/복사붙여넣기 지원)")
 
 # 2. 날짜 설정 및 파일 업로드
 col1, col2 = st.columns([1, 2])
@@ -57,13 +57,25 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"파일 처리 중 오류 발생: {e}")
 
-# 4. 실시간 편집기 (표 1 전체 품목 표시)
-st.subheader("📋 실시간 재고/발주 현황 (전체 품목)")
+# 4. 실시간 편집기 (키인 및 Ctrl+C/V 가능하도록 설정)
+st.subheader("📋 실시간 재고/발주 현황 (수정 및 붙여넣기 가능)")
+st.info("💡 '전일기말재고', '전일입고재고', '당일입고예정' 등의 셀을 더블클릭하여 직접 입력하거나, 외부 엑셀 표를 복사(Ctrl+C)한 뒤 첫 번째 셀을 클릭하고 붙여넣기(Ctrl+V)할 수 있습니다.")
+
 edited_df = st.data_editor(
     st.session_state.stock_data, 
-    column_config={"excel_key": st.column_config.TextColumn("RAW코드", disabled=True)},
+    column_config={
+        "구분2": st.column_config.TextColumn(disabled=True),
+        "excel_key": st.column_config.TextColumn("RAW코드", disabled=True),
+        "입수(PLT)": st.column_config.NumberColumn(disabled=True),
+        "MOQ_PCS": st.column_config.NumberColumn(disabled=True),
+        "평균사용량": st.column_config.NumberColumn(disabled=True),
+        "안전재고": st.column_config.NumberColumn(disabled=True),
+        # 키인 가능한 컬럼들 (기말재고, 입고재고, 실사용량, 입고예정)은 활성화 유지
+    },
+    num_rows="fixed",
     use_container_width=True,
-    hide_index=True
+    hide_index=True,
+    key="main_editor"
 )
 
 st.session_state.stock_data = edited_df
