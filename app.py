@@ -28,18 +28,18 @@ if "stock_data" not in st.session_state:
 
 st.title("📦 물류 재고 및 발주 통합 대시보드")
 
-# 2. 날짜 설정 (발주대상일 / 입고예정일 분리) 및 파일 업로드
+# 2. 날짜 설정 (발주 대상일 / 입고 예정일) 및 파일 업로드
 col1, col2, col3 = st.columns([1, 1, 2])
 with col1:
-    order_date = st.date_input("발주 대상일", datetime.date(2026, 8, 24))
+    order_date = st.date_input("발주 대상일", datetime.date(2026, 8, 19))
 with col2:
-    delivery_date = st.date_input("입고 예정일", datetime.date(2026, 8, 19))
+    delivery_date = st.date_input("입고 예정일", datetime.date(2026, 8, 24))
 with col3:
     uploaded_file = st.file_uploader("출고일마감 파일 업로드 (실사용량 자동 반영)", type=["xlsx", "xls"])
 
-# 날짜 차이(일수) 계산 (안전재고 산출용: 발주대상일 - 입고예정일)
-lead_time_days = max(0, (order_date - delivery_date).days)
-st.info(f"📅 **설정된 리드타임 일수 (발주대상일 - 입고예정일):** {lead_time_days}일")
+# 날짜 차이(일수) 계산 (리드타임 = 입고예정일 - 발주대상일)
+lead_time_days = max(0, (delivery_date - order_date).days)
+st.info(f"📅 **설정된 리드타임 (입고예정일 - 발주대상일):** {lead_time_days}일")
 
 # 3. 데이터 정제 로직 (배송번호 기준 중복 제거 및 실사용량 자동 매핑)
 if uploaded_file is not None:
@@ -61,10 +61,10 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"파일 처리 중 오류 발생: {e}")
 
-# 4. 연동 계산 수식 적용 (안전재고를 여기서 먼저 계산)
+# 4. 연동 계산 수식 적용
 display_df = st.session_state.stock_data.copy()
 
-# 안전재고 = 평균사용량 × (발주대상일 - 입고예정일)
+# 안전재고 = 평균사용량 × 리드타임 일수 (입고예정일 - 발주대상일)
 display_df["안전재고"] = display_df["평균사용량"] * lead_time_days
 
 # 기초재고 소계 = 기말 + 입고 - 실사용 + 입고예정
