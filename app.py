@@ -22,6 +22,10 @@ if "stock_data" not in st.session_state:
         "전일실사용량": [0] * len(ITEM_LIST)
     })
 
+if "calculated_result" not in st.session_state: st.session_state.calculated_result = None
+# 업로드된 파일 데이터를 임시 보관
+if "uploaded_pivot" not in st.session_state: st.session_state.uploaded_pivot = None
+
 st.title("📦 물류 재고 및 발주 통합 대시보드")
 
 # --- [고정 틀 2: 날짜 및 파일 업로드] ---
@@ -36,26 +40,37 @@ if uploaded_file is not None:
     try:
         df = pd.read_excel(uploaded_file)
         if '운송장번호(박스기준)' in df.columns and '박스호수(실제)' in df.columns:
-            pivot = df.drop_duplicates(subset=['운송장번호(박스기준)'])['박스호수(실제)'].value_counts()
-            for idx, row in st.session_state.stock_data.iterrows():
-                st.session_state.stock_data.at[idx, "전일실사용량"] = pivot.get(row["excel_key"], 0)
+            st.session_state.uploaded_pivot = df.drop_duplicates(subset=['운송장번호(박스기준)'])['박스호수(실제)'].value_counts()
+            st.success("✅ 파일이 성공적으로 준비되었습니다 (계산 버튼을 누르면 적용됩니다).")
     except Exception as e: st.error(f"❌ 파일 읽기 오류: {e}")
 
-# --- [고정 틀 3: 실시간 즉시 계산 편집기] ---
-st.subheader("📋 재고 및 입고량 입력 (수정 시 즉시 결과 반영)")
+# --- [고정 틀 3: 실시간 데이터 편집기] ---
+st.subheader("📋 재고 및 입고량 입력 (엑셀 복사/붙여넣기 가능)")
 edited_df = st.data_editor(st.session_state.stock_data, num_rows="fixed", use_container_width=True, hide_index=True)
 
-# --- [고정 틀 4: 즉시 계산 로직 (버튼 필요 없음)] ---
-res = edited_df.copy()
-lead_time = max(0, (delivery_date - order_date).days)
-res["안전재고"] = (res["전일실사용량"] / avg_days) * lead_time
-res["기초재고소계"] = res["전일기말재고"] - res["전일실사용량"] + res["입고예정량"]
-res["발주필요량"] = res.apply(lambda x: max(0, x["안전재고"] - (x["기초재고소계"] - x["안전재고"])), axis=1)
+# --- [고정 틀 4: 계산 실행 버튼] ---
+if st.button("🚀 계산 실행", type="primary", use_container_width=True):
+    with st.spinner("⚙️ 실사용량 집계 및 발주량 계산 중..."):
+        res = edited_df.copy()
+        # 파일 업로드된 값이 있다면 실사용량에 즉시 적용
+        if st.session_state.uploaded_pivot is not None:
+            for idx, row in res.iterrows():
+                res.at[idx, "전일실사용량"] = st.session_state.uploaded_pivot.get(row["excel_key"], 0)
+        
+        lead_time = max(0, (delivery_date - order_date).days)
+        res["안전재고"] = (res["전일실사용량"] / avg_days) * lead_time
+        res["기초재고소계"] = res["전일기말재고"] - res["전일실사용량"] + res["입고예정량"]
+        res["발주필요량"] = res.apply(lambda x: max(0, x["안전재고"] - (x["기초재고소계"] - x["안전재고"])), axis=1)
+        st.session_state.calculated_result = res
 
 # --- [고정 틀 5: 계산 결과 고정 영역] ---
 st.markdown("---")
 st.subheader("📊 최종 계산 및 발주 요약")
-st.dataframe(
-    res[["구분2", "입수(PLT)", "전일실사용량", "안전재고", "기초재고소계", "발주필요량"]], 
-    use_container_width=True, hide_index=True
+if st.session_state.calculated_result is not None:
+    st.dataframe(
+        st.session_state.calculated_result[["구분2", "입수(PLT)", "전일실사용량", "안전재고", "기초재고소계", "발주필요량"]], 
+        use_container_width=True, hide_index=True
+    )
+else:
+    st.info("ℹ️ 데이터를 입력하고 [계산 실행] 버튼을 누르면 여기에 결과가 표시됩니다.")
 )
