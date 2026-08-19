@@ -45,39 +45,39 @@ with col3:
     avg_days = st.number_input("평균 산출 기간(일)", min_value=1, max_value=30, value=10)
 with col4:
     file_date = st.date_input("업로드할 파일의 기준 날짜", datetime.date(2026, 8, 18))
-    uploaded_file = st.file_uploader("출고일마감 파일 업로드 (이력 자동 누적)", type=["xlsx", "xls"])
+    uploaded_file = st.file_uploader("출고일마감 파일 업로드 (피벗 집계 자동 누적)", type=["xlsx", "xls"])
 
 # 리드타임 일수 계산 (입고예정일 - 발주대상일)
 lead_time_days = max(0, (delivery_date - order_date).days)
 
-# 3. 파일 업로드 시 이력 자동 저장 로직 (로딩바 적용)
+# 3. 파일 업로드 시 피벗 집계 및 이력 저장 로직 (로딩바 적용)
 if uploaded_file is not None:
-    with st.spinner("🔄 출고일마감 파일을 분석하고 이력을 누적하는 중입니다..."):
+    with st.spinner("🔄 출고일마감 파일을 분석하고 피벗 집계를 수행하는 중입니다..."):
         try:
             raw_df = pd.read_excel(uploaded_file, sheet_name=0)
-            if '배송번호(착지기준)' in raw_df.columns and '박스호수(실제)' in raw_df.columns:
-                df_unique = raw_df.drop_duplicates(subset=['배송번호(착지기준)'])
-                daily_usage = df_unique['박스호수(실제)'].value_counts().to_dict()
+            if '박스호수(실제)' in raw_df.columns:
+                # 엑셀 피벗테이블처럼 박스호수별 빈도(실사용량) 집계
+                pivot_counts = raw_df['박스호수(실제)'].value_counts().to_dict()
                 
                 date_str = file_date.strftime("%Y-%m-%d")
-                st.session_state.usage_history[date_str] = daily_usage
+                st.session_state.usage_history[date_str] = pivot_counts
                 
                 stock_data = st.session_state.stock_data
                 for idx, row in stock_data.iterrows():
                     key = row["excel_key"]
-                    stock_data.at[idx, "전일실사용량"] = daily_usage.get(key, 0)
+                    stock_data.at[idx, "전일실사용량"] = pivot_counts.get(key, 0)
                 st.session_state.stock_data = stock_data
                 
-                st.success(f"✅ [{date_str}] 출고 데이터가 이력에 안전하게 누적되었습니다! (총 누적된 날짜 수: {len(st.session_state.usage_history)}일)")
+                st.success(f"✅ [{date_str}] 피벗 집계 완료! 데이터가 이력에 안전하게 누적되었습니다. (총 누적된 날짜 수: {len(st.session_state.usage_history)}일)")
             else:
-                st.error("❌ 파일에 필요한 컬럼('배송번호(착지기준)', '박스호수(실제)')이 없습니다.")
+                st.error("❌ 파일에 필요한 컬럼('박스호수(실제)')이 없습니다.")
         except Exception as e:
             st.error(f"파일 처리 중 오류 발생: {e}")
 
 # 4. 최근 N일 평균 사용량 자동 계산 로직
 def calculate_recent_average(n_days):
     if not st.session_state.usage_history:
-        return [1451, 4153, 3168, 103, 78, 232, 441, 589, 877, 895, 8, 88, 20]
+        return [1568, 4092, 2994, 129, 80, 277, 515, 674, 1123, 1009, 3, 71, 8] # 이미지 참고 기본값
     
     sorted_dates = sorted(st.session_state.usage_history.keys(), reverse=True)
     target_dates = sorted_dates[:n_days]
@@ -99,7 +99,7 @@ def calculate_recent_average(n_days):
 current_avg_usage = calculate_recent_average(int(avg_days))
 st.session_state.stock_data["평균사용량"] = current_avg_usage
 
-st.info(f"📅 **설정 리드타임:** {lead_time_days}일 | 📈 **평균 산출 반영:** 최근 {min(len(st.session_state.usage_history), int(avg_days))}일간의 누적 데이터 기준 평균 적용됨")
+st.info(f"📅 **설정 리드타임:** {lead_time_days}일 | 📈 **평균 산출 반영:** 최근 {min(len(st.session_state.usage_history), int(avg_days))}일간의 누적 피벗 데이터 기준 평균 적용됨")
 
 # 5. 실시간 편집기 (키인 및 Ctrl+C/V 가능)
 st.subheader("📋 재고 데이터 입력 및 수정")
@@ -127,7 +127,7 @@ with col_btn1:
     calculate_clicked = st.button("🚀 계산 실행", type="primary", use_container_width=True)
 
 if calculate_clicked:
-    with st.spinner("⚙️ 발주 필요량을 계산하는 중입니다..."):
+    with st.spinner("⚙️ 피벗 집계 결과와 재고를 바탕으로 발주 필요량을 계산하는 중입니다..."):
         st.session_state.stock_data = edited_df.copy()
         
         res_df = edited_df.copy()
