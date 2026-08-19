@@ -17,13 +17,10 @@ if "stock_data" not in st.session_state:
         "구분2": [i[0] for i in ITEM_LIST],
         "excel_key": [i[1] for i in ITEM_LIST],
         "입수(PLT)": [300, 210, 210, 320, 2520, 960, 640, 640, 640, 320, 320, 320, 160],
-        "MOQ_PCS": [3000, 1890, 1680, 2240, 7560, 5760, 3840, 3840, 3200, 1920, 1600, 1600, 1280],
         "전일기말재고": [20100, 14280, 11760, 320, 2680, 960, 1920, 4160, 3200, 3040, 2080, 800, 160],
         "입고예정량": [0] * len(ITEM_LIST),
         "전일실사용량": [0] * len(ITEM_LIST)
     })
-
-if "calculated_result" not in st.session_state: st.session_state.calculated_result = None
 
 st.title("📦 물류 재고 및 발주 통합 대시보드")
 
@@ -37,38 +34,28 @@ with col4: uploaded_file = st.file_uploader("출고일마감 파일 업로드", 
 
 if uploaded_file is not None:
     try:
-        # 파일 확장자에 따라 엔진을 자동으로 선택하여 읽기
         df = pd.read_excel(uploaded_file)
         if '운송장번호(박스기준)' in df.columns and '박스호수(실제)' in df.columns:
             pivot = df.drop_duplicates(subset=['운송장번호(박스기준)'])['박스호수(실제)'].value_counts()
             for idx, row in st.session_state.stock_data.iterrows():
                 st.session_state.stock_data.at[idx, "전일실사용량"] = pivot.get(row["excel_key"], 0)
-            st.success("✅ 출고 파일 분석 완료!")
-        else:
-            st.error("❌ 파일에 필요한 컬럼('운송장번호(박스기준)', '박스호수(실제)')이 없습니다.")
-    except Exception as e:
-        st.error(f"❌ 파일 읽기 오류: {e}")
+    except Exception as e: st.error(f"❌ 파일 읽기 오류: {e}")
 
-# --- [고정 틀 3: 실시간 데이터 편집기] ---
-st.subheader("📋 재고 및 입고량 입력 (엑셀 복사/붙여넣기 가능)")
+# --- [고정 틀 3: 실시간 즉시 계산 편집기] ---
+st.subheader("📋 재고 및 입고량 입력 (수정 시 즉시 결과 반영)")
 edited_df = st.data_editor(st.session_state.stock_data, num_rows="fixed", use_container_width=True, hide_index=True)
 
-# --- [고정 틀 4: 계산 실행 버튼] ---
-if st.button("🚀 계산 실행", type="primary", use_container_width=True):
-    res = edited_df.copy()
-    lead_time = max(0, (delivery_date - order_date).days)
-    res["안전재고"] = (res["전일실사용량"] / avg_days) * lead_time
-    res["기초재고소계"] = res["전일기말재고"] - res["전일실사용량"] + res["입고예정량"]
-    res["발주필요량"] = res.apply(lambda x: max(0, x["안전재고"] - (x["기초재고소계"] - x["안전재고"])), axis=1)
-    st.session_state.calculated_result = res
+# --- [고정 틀 4: 즉시 계산 로직 (버튼 필요 없음)] ---
+res = edited_df.copy()
+lead_time = max(0, (delivery_date - order_date).days)
+res["안전재고"] = (res["전일실사용량"] / avg_days) * lead_time
+res["기초재고소계"] = res["전일기말재고"] - res["전일실사용량"] + res["입고예정량"]
+res["발주필요량"] = res.apply(lambda x: max(0, x["안전재고"] - (x["기초재고소계"] - x["안전재고"])), axis=1)
 
 # --- [고정 틀 5: 계산 결과 고정 영역] ---
 st.markdown("---")
 st.subheader("📊 최종 계산 및 발주 요약")
-if st.session_state.calculated_result is not None:
-    st.dataframe(
-        st.session_state.calculated_result[["구분2", "입수(PLT)", "전일실사용량", "안전재고", "기초재고소계", "발주필요량"]], 
-        use_container_width=True, hide_index=True
-    )
-else:
-    st.info("ℹ️ 데이터를 입력하고 [계산 실행] 버튼을 누르면 여기에 결과가 표시됩니다.")
+st.dataframe(
+    res[["구분2", "입수(PLT)", "전일실사용량", "안전재고", "기초재고소계", "발주필요량"]], 
+    use_container_width=True, hide_index=True
+)
