@@ -82,8 +82,8 @@ st.subheader("📊 최종 계산 및 발주 요약")
 if st.session_state.calculated_result is not None:
     display_df = st.session_state.calculated_result[["excel_key", "구분2", "입수(PLT)", "전일실사용량", "평균사용량", "안전재고", "기초재고소계", "예상잔여재고", "발주필요량"]]
 
-    # 주력 박스로 지정할 excel_key 리스트 (I-01, I-02, 스타 4호(C-04), 5호(C-05), 6호(C-06))
-    main_items = ["I-01", "I-02", "C-04", "C-05", "C-06"]
+    # 주력 박스로 지정할 excel_key 리스트 (I-01, I-02, I-03, 스타 4호(C-04), 5호(C-05), 6호(C-06))
+    main_items = ["I-01", "I-02", "I-03", "C-04", "C-05", "C-06"]
 
     def highlight_main_items(row):
         if row["excel_key"] in main_items:
