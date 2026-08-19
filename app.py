@@ -27,13 +27,15 @@ if "calculated_result" not in st.session_state: st.session_state.calculated_resu
 
 st.title("📦 물류 재고 및 발주 통합 대시보드")
 
-# --- [고정 틀 2: 날짜 및 파일 업로드] ---
+# --- [고정 틀 2: 날짜 및 파일 업로드 + 안전재고 마진율 설정 추가] ---
 today = datetime.date(2026, 8, 19)
-col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
+col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 2])
 with col1: order_date = st.date_input("발주 대상일", today)
 with col2: delivery_date = st.date_input("입고 예정일", today + datetime.timedelta(days=6))
 with col3: avg_days = st.number_input("평균 산출 기간(일)", 1, 30, 10)
-with col4: uploaded_file = st.file_uploader("출고일마감 파일 업로드", type=["xlsx", "xls"])
+# 점장님 요청 반영: 안전재고 대비 여유 마진율 (예: 1.1배 = 110%, 1.2배 = 120% 이하면 미리 발주)
+with col4: safety_margin = st.number_input("안전재고 마진율", 1.0, 1.5, 1.1, step=0.05, help="1.1 = 안전재고의 110% 수준일 때 미리 발주 추천")
+with col5: uploaded_file = st.file_uploader("출고일마감 파일 업로드", type=["xlsx", "xls"])
 
 # --- [고정 틀 3: 실시간 데이터 편집기] ---
 st.subheader("📋 재고 및 입고량 입력 (엑셀 복사/붙여넣기 가능)")
@@ -61,8 +63,8 @@ if st.button("🚀 계산 실행", type="primary", use_container_width=True):
         # 리드타임 (발주 대상일 포함)
         lead_time = max(0, (delivery_date - order_date).days) + 1
         
-        # 안전재고 (리드타임 소모 기준량)
-        res["안전재고"] = res["평균사용량"] * lead_time
+        # 기본 안전재고 * 마진율 적용 (예: 110% 또는 120%)
+        res["안전재고"] = (res["평균사용량"] * lead_time) * safety_margin
         
         # 기초재고소계
         res["기초재고소계"] = res["전일기말재고"] - res["전일실사용량"] + res["입고예정량"]
