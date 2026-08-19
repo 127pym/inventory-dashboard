@@ -29,7 +29,7 @@ if "stock_data" not in st.session_state:
 if "usage_history" not in st.session_state:
     st.session_state.usage_history = {}
 
-# 계산 결과 데이터프레임 초기화 (초기에는 빈 상태 혹은 기본 구조로 대기)
+# 계산 결과 데이터프레임 초기화
 if "calculated_result" not in st.session_state:
     st.session_state.calculated_result = None
 
@@ -50,28 +50,29 @@ with col4:
 # 리드타임 일수 계산 (입고예정일 - 발주대상일)
 lead_time_days = max(0, (delivery_date - order_date).days)
 
-# 3. 파일 업로드 시 이력 자동 저장 로직
+# 3. 파일 업로드 시 이력 자동 저장 로직 (로딩바 적용)
 if uploaded_file is not None:
-    try:
-        raw_df = pd.read_excel(uploaded_file, sheet_name=0)
-        if '배송번호(착지기준)' in raw_df.columns and '박스호수(실제)' in raw_df.columns:
-            df_unique = raw_df.drop_duplicates(subset=['배송번호(착지기준)'])
-            daily_usage = df_unique['박스호수(실제)'].value_counts().to_dict()
-            
-            date_str = file_date.strftime("%Y-%m-%d")
-            st.session_state.usage_history[date_str] = daily_usage
-            
-            stock_data = st.session_state.stock_data
-            for idx, row in stock_data.iterrows():
-                key = row["excel_key"]
-                stock_data.at[idx, "전일실사용량"] = daily_usage.get(key, 0)
-            st.session_state.stock_data = stock_data
-            
-            st.success(f"✅ [{date_str}] 출고 데이터가 이력에 안전하게 누적되었습니다! (총 누적된 날짜 수: {len(st.session_state.usage_history)}일)")
-        else:
-            st.error("❌ 파일에 필요한 컬럼('배송번호(착지기준)', '박스호수(실제)')이 없습니다.")
-    except Exception as e:
-        st.error(f"파일 처리 중 오류 발생: {e}")
+    with st.spinner("🔄 출고일마감 파일을 분석하고 이력을 누적하는 중입니다..."):
+        try:
+            raw_df = pd.read_excel(uploaded_file, sheet_name=0)
+            if '배송번호(착지기준)' in raw_df.columns and '박스호수(실제)' in raw_df.columns:
+                df_unique = raw_df.drop_duplicates(subset=['배송번호(착지기준)'])
+                daily_usage = df_unique['박스호수(실제)'].value_counts().to_dict()
+                
+                date_str = file_date.strftime("%Y-%m-%d")
+                st.session_state.usage_history[date_str] = daily_usage
+                
+                stock_data = st.session_state.stock_data
+                for idx, row in stock_data.iterrows():
+                    key = row["excel_key"]
+                    stock_data.at[idx, "전일실사용량"] = daily_usage.get(key, 0)
+                st.session_state.stock_data = stock_data
+                
+                st.success(f"✅ [{date_str}] 출고 데이터가 이력에 안전하게 누적되었습니다! (총 누적된 날짜 수: {len(st.session_state.usage_history)}일)")
+            else:
+                st.error("❌ 파일에 필요한 컬럼('배송번호(착지기준)', '박스호수(실제)')이 없습니다.")
+        except Exception as e:
+            st.error(f"파일 처리 중 오류 발생: {e}")
 
 # 4. 최근 N일 평균 사용량 자동 계산 로직
 def calculate_recent_average(n_days):
@@ -119,24 +120,25 @@ edited_df = st.data_editor(
     key="main_editor"
 )
 
-# 6. 계산 실행 버튼 (고정 배치)
+# 6. 계산 실행 버튼 및 로딩바 적용
 st.markdown("---")
 col_btn1, col_btn2 = st.columns([1, 4])
 with col_btn1:
     calculate_clicked = st.button("🚀 계산 실행", type="primary", use_container_width=True)
 
 if calculate_clicked:
-    st.session_state.stock_data = edited_df.copy()
-    
-    res_df = edited_df.copy()
-    res_df["안전재고"] = res_df["평균사용량"] * lead_time_days
-    res_df["기초재고소계"] = (
-        res_df["전일기말재고"] + res_df["전일입고재고"] - res_df["전일실사용량"] + res_df["당일입고예정"]
-    )
-    res_df["예상잔여재고"] = res_df["기초재고소계"] - res_df["안전재고"]
-    res_df["발주필요량"] = res_df.apply(lambda x: max(0, x["안전재고"] - x["예상잔여재고"]), axis=1)
-    
-    st.session_state.calculated_result = res_df
+    with st.spinner("⚙️ 발주 필요량을 계산하는 중입니다..."):
+        st.session_state.stock_data = edited_df.copy()
+        
+        res_df = edited_df.copy()
+        res_df["안전재고"] = res_df["평균사용량"] * lead_time_days
+        res_df["기초재고소계"] = (
+            res_df["전일기말재고"] + res_df["전일입고재고"] - res_df["전일실사용량"] + res_df["당일입고예정"]
+        )
+        res_df["예상잔여재고"] = res_df["기초재고소계"] - res_df["안전재고"]
+        res_df["발주필요량"] = res_df.apply(lambda x: max(0, x["안전재고"] - x["예상잔여재고"]), axis=1)
+        
+        st.session_state.calculated_result = res_df
 
 # 7. 버튼 아래에 고정으로 자리 잡는 최종 결과 요약 영역
 st.subheader("📊 최종 계산 및 발주 요약")
