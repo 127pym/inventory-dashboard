@@ -67,8 +67,11 @@ if st.button("🚀 계산 실행", type="primary", use_container_width=True):
         # 기초재고소계
         res["기초재고소계"] = res["전일기말재고"] - res["전일실사용량"] + res["입고예정량"]
         
-        # [정확한 점장님 공식 적용]: 안전재고 - (기초재고소계 - 안전재고)
-        res["발주필요량"] = res.apply(lambda x: max(0, x["안전재고"] - (x["기초재고소계"] - x["안전재고"])), axis=1)
+        # 예상 재고 잔여량 (기초재고소계 - 안전재고)
+        res["예상잔여재고"] = res["기초재고소계"] - res["안전재고"]
+        
+        # 발주필요량
+        res["발주필요량"] = res.apply(lambda x: max(0, x["안전재고"] - x["기초재고소계"]), axis=1)
         
         st.session_state.calculated_result = res
 
@@ -77,9 +80,8 @@ st.markdown("---")
 st.subheader("📊 최종 계산 및 발주 요약")
 if st.session_state.calculated_result is not None:
     st.dataframe(
-        st.session_state.calculated_result[["구분2", "입수(PLT)", "전일실사용량", "평균사용량", "안전재고", "기초재고소계", "발주필요량"]], 
+        st.session_state.calculated_result[["구분2", "입수(PLT)", "전일실사용량", "평균사용량", "안전재고", "기초재고소계", "예상잔여재고", "발주필요량"]], 
         use_container_width=True, hide_index=True
     )
 else:
     st.info("ℹ️ 데이터를 입력하고 [계산 실행] 버튼을 누르면 여기에 결과가 표시됩니다.")
-
