@@ -23,18 +23,23 @@ if "stock_data" not in st.session_state:
         "전일기말재고": [20100, 14280, 11760, 320, 2680, 960, 1920, 4160, 3200, 3040, 2080, 800, 160],
         "전일입고재고": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         "전일실사용량": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        "당일입고예정": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        "안전재고": [4353, 12460, 9503, 308, 234, 696, 1323, 1767, 2632, 2685, 25, 265, 60]
+        "당일입고예정": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     })
 
-st.title("📦 물류 재고 및 발주 통합 대시보드 (키인/복사붙여넣기 지원)")
+st.title("📦 물류 재고 및 발주 통합 대시보드")
 
-# 2. 날짜 설정 및 파일 업로드
-col1, col2 = st.columns([1, 2])
+# 2. 날짜 설정 (발주대상일 / 입고예정일 분리) 및 파일 업로드
+col1, col2, col3 = st.columns([1, 1, 2])
 with col1:
-    target_date = st.date_input("기준 날짜 선택", datetime.date(2026, 8, 19))
+    order_date = st.date_input("발주 대상일", datetime.date(2026, 8, 24))
 with col2:
-    uploaded_file = st.file_uploader(f"{target_date.strftime('%Y%m%d')} 출고일마감 파일 업로드", type=["xlsx", "xls"])
+    delivery_date = st.date_input("입고 예정일", datetime.date(2026, 8, 19))
+with col3:
+    uploaded_file = st.file_uploader("출고일마감 파일 업로드 (실사용량 자동 반영)", type=["xlsx", "xls"])
+
+# 날짜 차이(일수) 계산 (안전재고 산출용)
+lead_time_days = max(0, (order_date - delivery_date).days)
+st.info(f"📅 **설정된 리드타임 일수 (발주대상일 - 입고예정일):** {lead_time_days}일")
 
 # 3. 데이터 정제 로직 (배송번호 기준 중복 제거 및 실사용량 자동 매핑)
 if uploaded_file is not None:
@@ -44,22 +49,21 @@ if uploaded_file is not None:
             df_unique = raw_df.drop_duplicates(subset=['배송번호(착지기준)'])
             daily_usage = df_unique['박스호수(실제)'].value_counts().to_dict()
             
-            # 전체 품목 표의 '전일실사용량'에 자동 반영
             stock_data = st.session_state.stock_data
             for idx, row in stock_data.iterrows():
                 key = row["excel_key"]
                 stock_data.at[idx, "전일실사용량"] = daily_usage.get(key, 0)
                 
             st.session_state.stock_data = stock_data
-            st.success(f"✅ {target_date} 기준 전체 품목의 실사용량이 성공적으로 반영되었습니다!")
+            st.success("✅ 출고일마감 파일의 실사용량이 성공적으로 반영되었습니다!")
         else:
             st.error("❌ 파일에 필요한 컬럼('배송번호(착지기준)', '박스호수(실제)')이 없습니다.")
     except Exception as e:
         st.error(f"파일 처리 중 오류 발생: {e}")
 
-# 4. 실시간 편집기 (키인 및 Ctrl+C/V 가능하도록 설정)
+# 4. 실시간 편집기 (키인 및 Ctrl+C/V 가능)
 st.subheader("📋 실시간 재고/발주 현황 (수정 및 붙여넣기 가능)")
-st.info("💡 '전일기말재고', '전일입고재고', '당일입고예정' 등의 셀을 더블클릭하여 직접 입력하거나, 외부 엑셀 표를 복사(Ctrl+C)한 뒤 첫 번째 셀을 클릭하고 붙여넣기(Ctrl+V)할 수 있습니다.")
+st.info("💡 '전일기말재고', '전일입고재고', '당일입고예정' 등의 셀을 더블클릭하여 직접 입력하거나, 엑셀 표를 복사(Ctrl+C)한 뒤 첫 셀에 붙여넣기(Ctrl+V)할 수 있습니다.")
 
 edited_df = st.data_editor(
     st.session_state.stock_data, 
@@ -69,8 +73,6 @@ edited_df = st.data_editor(
         "입수(PLT)": st.column_config.NumberColumn(disabled=True),
         "MOQ_PCS": st.column_config.NumberColumn(disabled=True),
         "평균사용량": st.column_config.NumberColumn(disabled=True),
-        "안전재고": st.column_config.NumberColumn(disabled=True),
-        # 키인 가능한 컬럼들 (기말재고, 입고재고, 실사용량, 입고예정)은 활성화 유지
     },
     num_rows="fixed",
     use_container_width=True,
@@ -82,19 +84,25 @@ st.session_state.stock_data = edited_df
 
 # 5. 연동 계산 수식 적용
 result_df = edited_df.copy()
+
+# 안전재고 = 평균사용량 × (발주대상일 - 입고예정일)
+result_df["안전재고"] = result_df["평균사용량"] * lead_time_days
+
 # 기초재고 소계 = 기말 + 입고 - 실사용 + 입고예정
 result_df["기초재고소계"] = (
     result_df["전일기말재고"] + result_df["전일입고재고"] - result_df["전일실사용량"] + result_df["당일입고예정"]
 )
-# 미발주 시 예상 잔여재고 (리드타임 5일 가정)
-result_df["예상잔여재고"] = result_df["기초재고소계"] - (result_df["평균사용량"] * 5)
-# 발주 필요량 산출
+
+# 예상 잔여재고 (기초재고소계 - (평균사용량 * 리드타임일수))
+result_df["예상잔여재고"] = result_df["기초재고소계"] - (result_df["평균사용량"] * lead_time_days)
+
+# 발주 필요량 산출 (안전재고 미달 시)
 result_df["발주필요량"] = result_df.apply(lambda x: max(0, x["안전재고"] - x["예상잔여재고"]), axis=1)
 
 # 6. 최종 결과 출력
 st.subheader("📊 최종 계산 및 발주 요약")
 st.dataframe(
-    result_df[["구분2", "입수(PLT)", "평균사용량", "기초재고소계", "예상잔여재고", "발주필요량"]], 
+    result_df[["구분2", "입수(PLT)", "평균사용량", "안전재고", "기초재고소계", "예상잔여재고", "발주필요량"]], 
     use_container_width=True, 
     hide_index=True
 )
