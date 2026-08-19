@@ -58,17 +58,17 @@ if st.button("🚀 계산 실행", type="primary", use_container_width=True):
         
         res["평균사용량"] = res["전일실사용량"] 
         
-        # [로직 적용]: 발주기준일 포함 3일이면 +1 처리
+        # 리드타임 (발주 대상일 포함)
         lead_time = max(0, (delivery_date - order_date).days) + 1
         
-        # [로직 적용]: 안전재고 = 평균사용량 * 리드타임
+        # 안전재고 (리드타임 소모 기준량)
         res["안전재고"] = res["평균사용량"] * lead_time
         
-        # [로직 적용]: 기초재고소계 = 기말 - 실사용 + 입고예정
+        # 기초재고소계
         res["기초재고소계"] = res["전일기말재고"] - res["전일실사용량"] + res["입고예정량"]
         
-        # [로직 적용]: 발주필요량 = 안전재고 - 기초재고소계
-        res["발주필요량"] = res.apply(lambda x: max(0, x["안전재고"] - x["기초재고소계"]), axis=1)
+        # [정확한 점장님 공식 적용]: 안전재고 - (기초재고소계 - 안전재고)
+        res["발주필요량"] = res.apply(lambda x: max(0, x["안전재고"] - (x["기초재고소계"] - x["안전재고"])), axis=1)
         
         st.session_state.calculated_result = res
 
