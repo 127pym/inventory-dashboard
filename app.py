@@ -25,14 +25,15 @@ if "stock_data" not in st.session_state:
         "당일입고예정": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     })
 
-# 일자별 사용량 이력을 저장할 공간 (날짜별 품목 사용량 딕셔너리 형태)
+# 일자별 사용량 이력 저장 공간
 if "usage_history" not in st.session_state:
     st.session_state.usage_history = {}
 
+# 계산 결과 데이터프레임 초기화 (초기에는 빈 상태 혹은 기본 구조로 대기)
 if "calculated_result" not in st.session_state:
     st.session_state.calculated_result = None
 
-st.title("📦 물류 재고 및 발주 통합 대시보드 (누적 평균 반영)")
+st.title("📦 물류 재고 및 발주 통합 대시보드")
 
 # 2. 날짜 설정 및 평균 기간 설정
 col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
@@ -57,11 +58,9 @@ if uploaded_file is not None:
             df_unique = raw_df.drop_duplicates(subset=['배송번호(착지기준)'])
             daily_usage = df_unique['박스호수(실제)'].value_counts().to_dict()
             
-            # 날짜별로 사용량 이력 저장 (문자열 키로 변환하여 저장)
             date_str = file_date.strftime("%Y-%m-%d")
             st.session_state.usage_history[date_str] = daily_usage
             
-            # 직전일 실사용량에도 오늘 올린 파일의 당일치기 값 반영
             stock_data = st.session_state.stock_data
             for idx, row in stock_data.iterrows():
                 key = row["excel_key"]
@@ -75,13 +74,10 @@ if uploaded_file is not None:
         st.error(f"파일 처리 중 오류 발생: {e}")
 
 # 4. 최근 N일 평균 사용량 자동 계산 로직
-# 저장된 이력 중 최근 N일치의 데이터를 모아서 품목별 평균 계산
 def calculate_recent_average(n_days):
     if not st.session_state.usage_history:
-        # 이력이 없을 경우 기본값 반환 (테스트용 하드코딩 평균)
         return [1451, 4153, 3168, 103, 78, 232, 441, 589, 877, 895, 8, 88, 20]
     
-    # 날짜순 정렬 후 최근 N일 선택
     sorted_dates = sorted(st.session_state.usage_history.keys(), reverse=True)
     target_dates = sorted_dates[:n_days]
     
@@ -105,7 +101,7 @@ st.session_state.stock_data["평균사용량"] = current_avg_usage
 st.info(f"📅 **설정 리드타임:** {lead_time_days}일 | 📈 **평균 산출 반영:** 최근 {min(len(st.session_state.usage_history), int(avg_days))}일간의 누적 데이터 기준 평균 적용됨")
 
 # 5. 실시간 편집기 (키인 및 Ctrl+C/V 가능)
-st.subheader("📋 재고 데이터 입력 및 수정 (자유롭게 키인/붙여넣기 가능)")
+st.subheader("📋 재고 데이터 입력 및 수정")
 st.info("💡 셀을 자유롭게 수정하거나 엑셀 표를 복사(Ctrl+C)해서 붙여넣은 뒤, 아래의 **[계산 실행]** 버튼을 누르세요.")
 
 edited_df = st.data_editor(
@@ -123,30 +119,33 @@ edited_df = st.data_editor(
     key="main_editor"
 )
 
-# 6. 수동 계산 버튼
-if st.button("🚀 계산 실행 (발주 필요량 산출)", type="primary"):
+# 6. 계산 실행 버튼 (고정 배치)
+st.markdown("---")
+col_btn1, col_btn2 = st.columns([1, 4])
+with col_btn1:
+    calculate_clicked = st.button("🚀 계산 실행", type="primary", use_container_width=True)
+
+if calculate_clicked:
     st.session_state.stock_data = edited_df.copy()
     
     res_df = edited_df.copy()
-    # 안전재고 = 평균사용량 × 리드타임 일수
     res_df["안전재고"] = res_df["평균사용량"] * lead_time_days
-    # 기초재고 소계 = 기말 + 입고 - 실사용 + 입고예정
     res_df["기초재고소계"] = (
         res_df["전일기말재고"] + res_df["전일입고재고"] - res_df["전일실사용량"] + res_df["당일입고예정"]
     )
-    # 예상 잔여재고 = 기초재고소계 - 안전재고
     res_df["예상잔여재고"] = res_df["기초재고소계"] - res_df["안전재고"]
-    # 발주 필요량 산출
     res_df["발주필요량"] = res_df.apply(lambda x: max(0, x["안전재고"] - x["예상잔여재고"]), axis=1)
     
     st.session_state.calculated_result = res_df
-    st.success("✨ 누적 평균을 반영한 발주 계산이 완료되었습니다!")
 
-# 7. 최종 결과 요약 출력
+# 7. 버튼 아래에 고정으로 자리 잡는 최종 결과 요약 영역
+st.subheader("📊 최종 계산 및 발주 요약")
+
 if st.session_state.calculated_result is not None:
-    st.subheader("📊 최종 계산 및 발주 요약")
     st.dataframe(
         st.session_state.calculated_result[["구분2", "입수(PLT)", "평균사용량", "안전재고", "기초재고소계", "예상잔여재고", "발주필요량"]], 
         use_container_width=True, 
         hide_index=True
     )
+else:
+    st.info("ℹ️ 위의 데이터를 확인하고 **[계산 실행]** 버튼을 누르면 최종 요약 결과가 여기에 표시됩니다.")
