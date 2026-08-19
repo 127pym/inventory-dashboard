@@ -73,4 +73,3 @@ if st.session_state.calculated_result is not None:
     )
 else:
     st.info("ℹ️ 데이터를 입력하고 [계산 실행] 버튼을 누르면 여기에 결과가 표시됩니다.")
-)
