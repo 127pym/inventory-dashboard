@@ -23,8 +23,6 @@ if "stock_data" not in st.session_state:
     })
 
 if "calculated_result" not in st.session_state: st.session_state.calculated_result = None
-# 업로드된 파일 데이터를 임시 보관
-if "uploaded_pivot" not in st.session_state: st.session_state.uploaded_pivot = None
 
 st.title("📦 물류 재고 및 발주 통합 대시보드")
 
@@ -36,27 +34,29 @@ with col2: delivery_date = st.date_input("입고 예정일", today + datetime.ti
 with col3: avg_days = st.number_input("평균 산출 기간(일)", 1, 30, 10)
 with col4: uploaded_file = st.file_uploader("출고일마감 파일 업로드", type=["xlsx", "xls"])
 
-if uploaded_file is not None:
-    try:
-        df = pd.read_excel(uploaded_file)
-        if '운송장번호(박스기준)' in df.columns and '박스호수(실제)' in df.columns:
-            st.session_state.uploaded_pivot = df.drop_duplicates(subset=['운송장번호(박스기준)'])['박스호수(실제)'].value_counts()
-            st.success("✅ 파일이 성공적으로 준비되었습니다 (계산 버튼을 누르면 적용됩니다).")
-    except Exception as e: st.error(f"❌ 파일 읽기 오류: {e}")
-
 # --- [고정 틀 3: 실시간 데이터 편집기] ---
 st.subheader("📋 재고 및 입고량 입력 (엑셀 복사/붙여넣기 가능)")
 edited_df = st.data_editor(st.session_state.stock_data, num_rows="fixed", use_container_width=True, hide_index=True)
 
-# --- [고정 틀 4: 계산 실행 버튼] ---
+# --- [고정 틀 4: 계산 실행 버튼 (파일 처리를 여기서 수행)] ---
 if st.button("🚀 계산 실행", type="primary", use_container_width=True):
-    with st.spinner("⚙️ 실사용량 집계 및 발주량 계산 중..."):
+    with st.spinner("⚙️ 파일 분석 및 계산 중..."):
         res = edited_df.copy()
-        # 파일 업로드된 값이 있다면 실사용량에 즉시 적용
-        if st.session_state.uploaded_pivot is not None:
-            for idx, row in res.iterrows():
-                res.at[idx, "전일실사용량"] = st.session_state.uploaded_pivot.get(row["excel_key"], 0)
         
+        # 버튼을 누르는 순간 파일 읽기 시작
+        if uploaded_file is not None:
+            try:
+                # 파일 포인터를 처음으로 되돌림 (업로드 후 상태 유지)
+                uploaded_file.seek(0)
+                df = pd.read_excel(uploaded_file)
+                if '운송장번호(박스기준)' in df.columns and '박스호수(실제)' in df.columns:
+                    pivot = df.drop_duplicates(subset=['운송장번호(박스기준)'])['박스호수(실제)'].value_counts()
+                    for idx, row in res.iterrows():
+                        res.at[idx, "전일실사용량"] = pivot.get(row["excel_key"], 0)
+            except Exception as e:
+                st.error(f"❌ 파일 분석 실패: {e}")
+        
+        # 계산 로직
         lead_time = max(0, (delivery_date - order_date).days)
         res["안전재고"] = (res["전일실사용량"] / avg_days) * lead_time
         res["기초재고소계"] = res["전일기말재고"] - res["전일실사용량"] + res["입고예정량"]
