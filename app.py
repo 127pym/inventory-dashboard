@@ -40,7 +40,7 @@ st.subheader("📋 재고 및 입고량 입력 (엑셀 복사/붙여넣기 가�
 edited_df = st.data_editor(st.session_state.stock_data, num_rows="fixed", use_container_width=True, hide_index=True)
 
 # --- [고정 틀 4: 계산 실행 버튼] ---
-if st.button("🚀 계산 실행", type="primary", use_container_width=True):
+if st.button("🚀 계산 실행", type="primary", use_location="sidebar", use_container_width=True) or st.button("🚀 계산 실행", type="primary", use_container_width=True):
     with st.spinner("⚙️ 파일 분석 및 계산 중..."):
         res = edited_df.copy()
         
@@ -75,13 +75,26 @@ if st.button("🚀 계산 실행", type="primary", use_container_width=True):
         
         st.session_state.calculated_result = res
 
-# --- [고정 틀 5: 계산 결과 고정 영역] ---
+# --- [고정 틀 5: 계산 결과 고정 영역 (주력 박스 연한 노란색 음영 스타일링 적용)] ---
 st.markdown("---")
 st.subheader("📊 최종 계산 및 발주 요약")
+
 if st.session_state.calculated_result is not None:
-    st.dataframe(
-        st.session_state.calculated_result[["구분2", "입수(PLT)", "전일실사용량", "평균사용량", "안전재고", "기초재고소계", "예상잔여재고", "발주필요량"]], 
-        use_container_width=True, hide_index=True
-    )
+    display_df = st.session_state.calculated_result[["excel_key", "구분2", "입수(PLT)", "전일실사용량", "평균사용량", "안전재고", "기초재고소계", "예상잔여재고", "발주필요량"]]
+
+    # 주력 박스로 지정할 excel_key 리스트 (I-01, I-02, C-04, C-05, C-06 대응)
+    # ('스타 4호', '스타 5호', '스타 6호'의 excel_key는 각각 C-04, C-05, C-06)
+    main_items = ["I-01", "I-02", "C-04", "C-05", "C-06"]
+
+    def highlight_main_items(row):
+        # excel_key가 주력 박스에 해당하면 연한 노란색 배경 적용
+        if row["excel_key"] in main_items:
+            return ['background-color: #FFF9C4'] * len(row)
+        return [''] * len(row)
+
+    # 스타일 적용 및 excel_key 컬럼은 보기 편하게 숨기거나 유지 (여기서는 화면 깔끔하게 excel_key는 숨김 처리)
+    styled_df = display_df.style.apply(highlight_main_items, axis=1).hide(subset=["excel_key"], axis=1)
+
+    st.dataframe(styled_df, use_container_width=True, hide_index=True)
 else:
     st.info("ℹ️ 데이터를 입력하고 [계산 실행] 버튼을 누르면 여기에 결과가 표시됩니다.")
