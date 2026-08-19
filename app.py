@@ -28,18 +28,26 @@ if "calculated_result" not in st.session_state: st.session_state.calculated_resu
 st.title("📦 물류 재고 및 발주 통합 대시보드")
 
 # --- [고정 틀 2: 날짜 및 파일 업로드] ---
-today = datetime.date.today()
+today = datetime.date(2026, 8, 19)
 col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
 with col1: order_date = st.date_input("발주 대상일", today)
 with col2: delivery_date = st.date_input("입고 예정일", today + datetime.timedelta(days=6))
 with col3: avg_days = st.number_input("평균 산출 기간(일)", 1, 30, 10)
 with col4: uploaded_file = st.file_uploader("출고일마감 파일 업로드", type=["xlsx", "xls"])
 
-if uploaded_file:
-    df = pd.read_excel(uploaded_file)
-    pivot = df.drop_duplicates(subset=['운송장번호(박스기준)'])['박스호수(실제)'].value_counts()
-    for idx, row in st.session_state.stock_data.iterrows():
-        st.session_state.stock_data.at[idx, "전일실사용량"] = pivot.get(row["excel_key"], 0)
+if uploaded_file is not None:
+    try:
+        # 안전한 읽기를 위해 엔진 명시
+        df = pd.read_excel(uploaded_file, engine='openpyxl')
+        if '운송장번호(박스기준)' in df.columns and '박스호수(실제)' in df.columns:
+            pivot = df.drop_duplicates(subset=['운송장번호(박스기준)'])['박스호수(실제)'].value_counts()
+            for idx, row in st.session_state.stock_data.iterrows():
+                st.session_state.stock_data.at[idx, "전일실사용량"] = pivot.get(row["excel_key"], 0)
+            st.success("✅ 출고 파일 분석 및 실사용량 반영 완료!")
+        else:
+            st.error("❌ 파일에 필요한 컬럼('운송장번호(박스기준)', '박스호수(실제)')이 없습니다.")
+    except Exception as e:
+        st.error(f"❌ 파일 읽기 오류: {e}")
 
 # --- [고정 틀 3: 실시간 데이터 편집기] ---
 st.subheader("📋 재고 및 입고량 입력 (엑셀 복사/붙여넣기 가능)")
