@@ -59,7 +59,7 @@ if st.button("🚀 계산 실행", type="primary", use_container_width=True):
         # 임시로 평균사용량을 '전일실사용량' 기준으로 연동 (추후 누적 이력 기능과 결합 가능)
         res["평균사용량"] = res["전일실사용량"] 
         
-        lead_time = max(0, (delivery_date - order_date).days)
+        lead_time = max(0, (delivery_date - order_date).days)+1
         
         # [정상 적용된 안전재고 공식]: 평균사용량 * 리드타임
         res["안전재고"] = res["평균사용량"] * lead_time
