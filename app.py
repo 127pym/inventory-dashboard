@@ -20,7 +20,7 @@ if "stock_data" not in st.session_state:
         "전일기말재고": [20100, 14280, 11760, 320, 2680, 960, 1920, 4160, 3200, 3040, 2080, 800, 160],
         "입고예정량": [0] * len(ITEM_LIST),
         "전일실사용량": [0] * len(ITEM_LIST),
-        "평균사용량": [0.0] * len(ITEM_LIST)  # 평균사용량 컬럼 추가
+        "평균사용량": [0.0] * len(ITEM_LIST)
     })
 
 if "calculated_result" not in st.session_state: st.session_state.calculated_result = None
@@ -44,7 +44,7 @@ if st.button("🚀 계산 실행", type="primary", use_container_width=True):
     with st.spinner("⚙️ 파일 분석 및 계산 중..."):
         res = edited_df.copy()
         
-        # 파일 업로드 처리 및 실사용량 갱신
+        # 파일 업로드 처리
         if uploaded_file is not None:
             try:
                 uploaded_file.seek(0)
@@ -56,16 +56,20 @@ if st.button("🚀 계산 실행", type="primary", use_container_width=True):
             except Exception as e:
                 st.error(f"❌ 파일 분석 실패: {e}")
         
-        # 임시로 평균사용량을 '전일실사용량' 기준으로 연동 (추후 누적 이력 기능과 결합 가능)
         res["평균사용량"] = res["전일실사용량"] 
         
-        lead_time = max(0, (delivery_date - order_date).days)+1
+        # [로직 적용]: 발주기준일 포함 3일이면 +1 처리
+        lead_time = max(0, (delivery_date - order_date).days) + 1
         
-        # [정상 적용된 안전재고 공식]: 평균사용량 * 리드타임
+        # [로직 적용]: 안전재고 = 평균사용량 * 리드타임
         res["안전재고"] = res["평균사용량"] * lead_time
         
+        # [로직 적용]: 기초재고소계 = 기말 - 실사용 + 입고예정
         res["기초재고소계"] = res["전일기말재고"] - res["전일실사용량"] + res["입고예정량"]
-        res["발주필요량"] = res.apply(lambda x: max(0, x["안전재고"] - (x["기초재고소계"] - x["안전재고"])), axis=1)
+        
+        # [로직 적용]: 발주필요량 = 안전재고 - 기초재고소계
+        res["발주필요량"] = res.apply(lambda x: max(0, x["안전재고"] - x["기초재고소계"]), axis=1)
+        
         st.session_state.calculated_result = res
 
 # --- [고정 틀 5: 계산 결과 고정 영역] ---
@@ -78,3 +82,4 @@ if st.session_state.calculated_result is not None:
     )
 else:
     st.info("ℹ️ 데이터를 입력하고 [계산 실행] 버튼을 누르면 여기에 결과가 표시됩니다.")
+
