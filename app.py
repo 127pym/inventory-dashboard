@@ -37,13 +37,13 @@ with col4: uploaded_file = st.file_uploader("출고일마감 파일 업로드", 
 
 if uploaded_file is not None:
     try:
-        # 안전한 읽기를 위해 엔진 명시
-        df = pd.read_excel(uploaded_file, engine='openpyxl')
+        # 파일 확장자에 따라 엔진을 자동으로 선택하여 읽기
+        df = pd.read_excel(uploaded_file)
         if '운송장번호(박스기준)' in df.columns and '박스호수(실제)' in df.columns:
             pivot = df.drop_duplicates(subset=['운송장번호(박스기준)'])['박스호수(실제)'].value_counts()
             for idx, row in st.session_state.stock_data.iterrows():
                 st.session_state.stock_data.at[idx, "전일실사용량"] = pivot.get(row["excel_key"], 0)
-            st.success("✅ 출고 파일 분석 및 실사용량 반영 완료!")
+            st.success("✅ 출고 파일 분석 완료!")
         else:
             st.error("❌ 파일에 필요한 컬럼('운송장번호(박스기준)', '박스호수(실제)')이 없습니다.")
     except Exception as e:
