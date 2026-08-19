@@ -19,7 +19,8 @@ if "stock_data" not in st.session_state:
         "입수(PLT)": [300, 210, 210, 320, 2520, 960, 640, 640, 640, 320, 320, 320, 160],
         "전일기말재고": [20100, 14280, 11760, 320, 2680, 960, 1920, 4160, 3200, 3040, 2080, 800, 160],
         "입고예정량": [0] * len(ITEM_LIST),
-        "전일실사용량": [0] * len(ITEM_LIST)
+        "전일실사용량": [0] * len(ITEM_LIST),
+        "평균사용량": [0.0] * len(ITEM_LIST)  # 평균사용량 컬럼 추가
     })
 
 if "calculated_result" not in st.session_state: st.session_state.calculated_result = None
@@ -38,15 +39,14 @@ with col4: uploaded_file = st.file_uploader("출고일마감 파일 업로드", 
 st.subheader("📋 재고 및 입고량 입력 (엑셀 복사/붙여넣기 가능)")
 edited_df = st.data_editor(st.session_state.stock_data, num_rows="fixed", use_container_width=True, hide_index=True)
 
-# --- [고정 틀 4: 계산 실행 버튼 (파일 처리를 여기서 수행)] ---
+# --- [고정 틀 4: 계산 실행 버튼] ---
 if st.button("🚀 계산 실행", type="primary", use_container_width=True):
     with st.spinner("⚙️ 파일 분석 및 계산 중..."):
         res = edited_df.copy()
         
-        # 버튼을 누르는 순간 파일 읽기 시작
+        # 파일 업로드 처리 및 실사용량 갱신
         if uploaded_file is not None:
             try:
-                # 파일 포인터를 처음으로 되돌림 (업로드 후 상태 유지)
                 uploaded_file.seek(0)
                 df = pd.read_excel(uploaded_file)
                 if '운송장번호(박스기준)' in df.columns and '박스호수(실제)' in df.columns:
@@ -56,9 +56,14 @@ if st.button("🚀 계산 실행", type="primary", use_container_width=True):
             except Exception as e:
                 st.error(f"❌ 파일 분석 실패: {e}")
         
-        # 계산 로직
+        # 임시로 평균사용량을 '전일실사용량' 기준으로 연동 (추후 누적 이력 기능과 결합 가능)
+        res["평균사용량"] = res["전일실사용량"] 
+        
         lead_time = max(0, (delivery_date - order_date).days)
-        res["안전재고"] = (res["전일실사용량"] / avg_days) * lead_time
+        
+        # [정상 적용된 안전재고 공식]: 평균사용량 * 리드타임
+        res["안전재고"] = res["평균사용량"] * lead_time
+        
         res["기초재고소계"] = res["전일기말재고"] - res["전일실사용량"] + res["입고예정량"]
         res["발주필요량"] = res.apply(lambda x: max(0, x["안전재고"] - (x["기초재고소계"] - x["안전재고"])), axis=1)
         st.session_state.calculated_result = res
@@ -68,7 +73,7 @@ st.markdown("---")
 st.subheader("📊 최종 계산 및 발주 요약")
 if st.session_state.calculated_result is not None:
     st.dataframe(
-        st.session_state.calculated_result[["구분2", "입수(PLT)", "전일실사용량", "안전재고", "기초재고소계", "발주필요량"]], 
+        st.session_state.calculated_result[["구분2", "입수(PLT)", "전일실사용량", "평균사용량", "안전재고", "기초재고소계", "발주필요량"]], 
         use_container_width=True, hide_index=True
     )
 else:
