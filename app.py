@@ -26,6 +26,9 @@ if "stock_data" not in st.session_state:
         "당일입고예정": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     })
 
+if "calculated_result" not in st.session_state:
+    st.session_state.calculated_result = None
+
 st.title("📦 물류 재고 및 발주 통합 대시보드")
 
 # 2. 날짜 설정 (발주 대상일 / 입고 예정일) 및 파일 업로드
@@ -55,45 +58,24 @@ if uploaded_file is not None:
                 stock_data.at[idx, "전일실사용량"] = daily_usage.get(key, 0)
                 
             st.session_state.stock_data = stock_data
-            st.success("✅ 출고일마감 파일의 실사용량이 성공적으로 반영되었습니다!")
+            st.success("✅ 출고일마감 파일의 실사용량이 성공적으로 반영되었습니다! (아래 표에서 [계산 실행]을 눌러주세요)")
         else:
             st.error("❌ 파일에 필요한 컬럼('배송번호(착지기준)', '박스호수(실제)')이 없습니다.")
     except Exception as e:
         st.error(f"파일 처리 중 오류 발생: {e}")
 
-# 4. 연동 계산 수식 적용
-display_df = st.session_state.stock_data.copy()
-
-# 안전재고 = 평균사용량 × 리드타임 일수 (입고예정일 - 발주대상일)
-display_df["안전재고"] = display_df["평균사용량"] * lead_time_days
-
-# 기초재고 소계 = 기말 + 입고 - 실사용 + 입고예정
-display_df["기초재고소계"] = (
-    display_df["전일기말재고"] + display_df["전일입고재고"] - display_df["전일실사용량"] + display_df["당일입고예정"]
-)
-
-# 예상 잔여재고 = 기초재고소계 - 안전재고
-display_df["예상잔여재고"] = display_df["기초재고소계"] - display_df["안전재고"]
-
-# 발주 필요량 산출 (안전재고 미달 시)
-display_df["발주필요량"] = display_df.apply(lambda x: max(0, x["안전재고"] - x["예상잔여재고"]), axis=1)
-
-# 5. 실시간 편집기 (키인 및 Ctrl+C/V 가능)
-st.subheader("📋 실시간 재고/발주 현황 (수정 및 붙여넣기 가능)")
-st.info("💡 '전일기말재고', '전일입고재고', '당일입고예정' 등의 셀을 더블클릭하여 직접 입력하거나, 엑셀 표를 복사(Ctrl+C)한 뒤 첫 셀에 붙여넣기(Ctrl+V)할 수 있습니다.")
+# 4. 실시간 편집기 (키인 및 Ctrl+C/V 전용 - 로딩 없음)
+st.subheader("📋 재고 데이터 입력 및 수정 (자유롭게 키인/붙여넣기 가능)")
+st.info("💡 셀을 자유롭게 수정하거나 엑셀 표를 복사(Ctrl+C)해서 붙여넣은 뒤, 아래의 **[계산 실행]** 버튼을 누르세요.")
 
 edited_df = st.data_editor(
-    display_df, 
+    st.session_state.stock_data, 
     column_config={
         "구분2": st.column_config.TextColumn(disabled=True),
         "excel_key": st.column_config.TextColumn("RAW코드", disabled=True),
         "입수(PLT)": st.column_config.NumberColumn(disabled=True),
         "MOQ_PCS": st.column_config.NumberColumn(disabled=True),
         "평균사용량": st.column_config.NumberColumn(disabled=True),
-        "안전재고": st.column_config.NumberColumn(disabled=True),
-        "기초재고소계": st.column_config.NumberColumn(disabled=True),
-        "예상잔여재고": st.column_config.NumberColumn(disabled=True),
-        "발주필요량": st.column_config.NumberColumn(disabled=True),
     },
     num_rows="fixed",
     use_container_width=True,
@@ -101,17 +83,28 @@ edited_df = st.data_editor(
     key="main_editor"
 )
 
-# 사용자가 수정한 재고 값들을 다시 세션에 반영
-for idx in range(len(st.session_state.stock_data)):
-    st.session_state.stock_data.at[idx, "전일기말재고"] = edited_df.at[idx, "전일기말재고"]
-    st.session_state.stock_data.at[idx, "전일입고재고"] = edited_df.at[idx, "전일입고재고"]
-    st.session_state.stock_data.at[idx, "전일실사용량"] = edited_df.at[idx, "전일실사용량"]
-    st.session_state.stock_data.at[idx, "당일입고예정"] = edited_df.at[idx, "당일입고예정"]
+# 5. 수동 계산 버튼
+if st.button("🚀 계산 실행 (발주 필요량 산출)", type="primary"):
+    # 입력된 에디터 값 세션에 저장
+    st.session_state.stock_data = edited_df.copy()
+    
+    # 연산 수행
+    res_df = edited_df.copy()
+    res_df["안전재고"] = res_df["평균사용량"] * lead_time_days
+    res_df["기초재고소계"] = (
+        res_df["전일기말재고"] + res_df["전일입고재고"] - res_df["전일실사용량"] + res_df["당일입고예정"]
+    )
+    res_df["예상잔여재고"] = res_df["기초재고소계"] - res_df["안전재고"]
+    res_df["발주필요량"] = res_df.apply(lambda x: max(0, x["안전재고"] - x["예상잔여재고"]), axis=1)
+    
+    st.session_state.calculated_result = res_df
+    st.success("✨ 계산이 완료되었습니다!")
 
-# 6. 최종 결과 요약 출력
-st.subheader("📊 최종 계산 및 발주 요약")
-st.dataframe(
-    edited_df[["구분2", "입수(PLT)", "평균사용량", "안전재고", "기초재고소계", "예상잔여재고", "발주필요량"]], 
-    use_container_width=True, 
-    hide_index=True
-)
+# 6. 최종 결과 요약 출력 (계산 버튼을 눌렀을 때만 표시)
+if st.session_state.calculated_result is not None:
+    st.subheader("📊 최종 계산 및 발주 요약")
+    st.dataframe(
+        st.session_state.calculated_result[["구분2", "입수(PLT)", "평균사용량", "안전재고", "기초재고소계", "예상잔여재고", "발주필요량"]], 
+        use_container_width=True, 
+        hide_index=True
+    )
