@@ -19,32 +19,37 @@ if "stock_data" not in st.session_state:
         ],
         "입수(PLT)": [300, 210, 210, 320, 2520, 960, 640, 640, 640, 320, 320, 320, 160],
         "MOQ_PCS": [3000, 1890, 1680, 2240, 7560, 5760, 3840, 3840, 3200, 1920, 1600, 1600, 1280],
-        "평균사용량": [1451, 4153, 3168, 103, 78, 232, 441, 589, 877, 895, 8, 88, 20],
         "전일기말재고": [20100, 14280, 11760, 320, 2680, 960, 1920, 4160, 3200, 3040, 2080, 800, 160],
         "전일입고재고": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         "전일실사용량": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         "당일입고예정": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     })
 
+# 일자별 사용량 이력을 저장할 공간 (날짜별 품목 사용량 딕셔너리 형태)
+if "usage_history" not in st.session_state:
+    st.session_state.usage_history = {}
+
 if "calculated_result" not in st.session_state:
     st.session_state.calculated_result = None
 
-st.title("📦 물류 재고 및 발주 통합 대시보드")
+st.title("📦 물류 재고 및 발주 통합 대시보드 (누적 평균 반영)")
 
-# 2. 날짜 설정 (발주 대상일 / 입고 예정일) 및 파일 업로드
-col1, col2, col3 = st.columns([1, 1, 2])
+# 2. 날짜 설정 및 평균 기간 설정
+col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
 with col1:
     order_date = st.date_input("발주 대상일", datetime.date(2026, 8, 19))
 with col2:
     delivery_date = st.date_input("입고 예정일", datetime.date(2026, 8, 24))
 with col3:
-    uploaded_file = st.file_uploader("출고일마감 파일 업로드 (실사용량 자동 반영)", type=["xlsx", "xls"])
+    avg_days = st.number_input("평균 산출 기간(일)", min_value=1, max_value=30, value=10)
+with col4:
+    file_date = st.date_input("업로드할 파일의 기준 날짜", datetime.date(2026, 8, 18))
+    uploaded_file = st.file_uploader("출고일마감 파일 업로드 (이력 자동 누적)", type=["xlsx", "xls"])
 
-# 날짜 차이(일수) 계산 (리드타임 = 입고예정일 - 발주대상일)
+# 리드타임 일수 계산 (입고예정일 - 발주대상일)
 lead_time_days = max(0, (delivery_date - order_date).days)
-st.info(f"📅 **설정된 리드타임 (입고예정일 - 발주대상일):** {lead_time_days}일")
 
-# 3. 데이터 정제 로직 (배송번호 기준 중복 제거 및 실사용량 자동 매핑)
+# 3. 파일 업로드 시 이력 자동 저장 로직
 if uploaded_file is not None:
     try:
         raw_df = pd.read_excel(uploaded_file, sheet_name=0)
@@ -52,19 +57,54 @@ if uploaded_file is not None:
             df_unique = raw_df.drop_duplicates(subset=['배송번호(착지기준)'])
             daily_usage = df_unique['박스호수(실제)'].value_counts().to_dict()
             
+            # 날짜별로 사용량 이력 저장 (문자열 키로 변환하여 저장)
+            date_str = file_date.strftime("%Y-%m-%d")
+            st.session_state.usage_history[date_str] = daily_usage
+            
+            # 직전일 실사용량에도 오늘 올린 파일의 당일치기 값 반영
             stock_data = st.session_state.stock_data
             for idx, row in stock_data.iterrows():
                 key = row["excel_key"]
                 stock_data.at[idx, "전일실사용량"] = daily_usage.get(key, 0)
-                
             st.session_state.stock_data = stock_data
-            st.success("✅ 출고일마감 파일의 실사용량이 성공적으로 반영되었습니다! (아래 표에서 [계산 실행]을 눌러주세요)")
+            
+            st.success(f"✅ [{date_str}] 출고 데이터가 이력에 안전하게 누적되었습니다! (총 누적된 날짜 수: {len(st.session_state.usage_history)}일)")
         else:
             st.error("❌ 파일에 필요한 컬럼('배송번호(착지기준)', '박스호수(실제)')이 없습니다.")
     except Exception as e:
         st.error(f"파일 처리 중 오류 발생: {e}")
 
-# 4. 실시간 편집기 (키인 및 Ctrl+C/V 전용 - 로딩 없음)
+# 4. 최근 N일 평균 사용량 자동 계산 로직
+# 저장된 이력 중 최근 N일치의 데이터를 모아서 품목별 평균 계산
+def calculate_recent_average(n_days):
+    if not st.session_state.usage_history:
+        # 이력이 없을 경우 기본값 반환 (테스트용 하드코딩 평균)
+        return [1451, 4153, 3168, 103, 78, 232, 441, 589, 877, 895, 8, 88, 20]
+    
+    # 날짜순 정렬 후 최근 N일 선택
+    sorted_dates = sorted(st.session_state.usage_history.keys(), reverse=True)
+    target_dates = sorted_dates[:n_days]
+    
+    averages = []
+    keys = st.session_state.stock_data["excel_key"].tolist()
+    
+    for key in keys:
+        values = []
+        for d in target_dates:
+            day_data = st.session_state.usage_history[d]
+            values.append(day_data.get(key, 0))
+        
+        avg = sum(values) / len(values) if values else 0
+        averages.append(round(avg, 1))
+        
+    return averages
+
+current_avg_usage = calculate_recent_average(int(avg_days))
+st.session_state.stock_data["평균사용량"] = current_avg_usage
+
+st.info(f"📅 **설정 리드타임:** {lead_time_days}일 | 📈 **평균 산출 반영:** 최근 {min(len(st.session_state.usage_history), int(avg_days))}일간의 누적 데이터 기준 평균 적용됨")
+
+# 5. 실시간 편집기 (키인 및 Ctrl+C/V 가능)
 st.subheader("📋 재고 데이터 입력 및 수정 (자유롭게 키인/붙여넣기 가능)")
 st.info("💡 셀을 자유롭게 수정하거나 엑셀 표를 복사(Ctrl+C)해서 붙여넣은 뒤, 아래의 **[계산 실행]** 버튼을 누르세요.")
 
@@ -75,7 +115,7 @@ edited_df = st.data_editor(
         "excel_key": st.column_config.TextColumn("RAW코드", disabled=True),
         "입수(PLT)": st.column_config.NumberColumn(disabled=True),
         "MOQ_PCS": st.column_config.NumberColumn(disabled=True),
-        "평균사용량": st.column_config.NumberColumn(disabled=True),
+        "평균사용량": st.column_config.NumberColumn(disabled=True, help="누적 이력 기반 자동 계산됨"),
     },
     num_rows="fixed",
     use_container_width=True,
@@ -83,24 +123,26 @@ edited_df = st.data_editor(
     key="main_editor"
 )
 
-# 5. 수동 계산 버튼
+# 6. 수동 계산 버튼
 if st.button("🚀 계산 실행 (발주 필요량 산출)", type="primary"):
-    # 입력된 에디터 값 세션에 저장
     st.session_state.stock_data = edited_df.copy()
     
-    # 연산 수행
     res_df = edited_df.copy()
+    # 안전재고 = 평균사용량 × 리드타임 일수
     res_df["안전재고"] = res_df["평균사용량"] * lead_time_days
+    # 기초재고 소계 = 기말 + 입고 - 실사용 + 입고예정
     res_df["기초재고소계"] = (
         res_df["전일기말재고"] + res_df["전일입고재고"] - res_df["전일실사용량"] + res_df["당일입고예정"]
     )
+    # 예상 잔여재고 = 기초재고소계 - 안전재고
     res_df["예상잔여재고"] = res_df["기초재고소계"] - res_df["안전재고"]
+    # 발주 필요량 산출
     res_df["발주필요량"] = res_df.apply(lambda x: max(0, x["안전재고"] - x["예상잔여재고"]), axis=1)
     
     st.session_state.calculated_result = res_df
-    st.success("✨ 계산이 완료되었습니다!")
+    st.success("✨ 누적 평균을 반영한 발주 계산이 완료되었습니다!")
 
-# 6. 최종 결과 요약 출력 (계산 버튼을 눌렀을 때만 표시)
+# 7. 최종 결과 요약 출력
 if st.session_state.calculated_result is not None:
     st.subheader("📊 최종 계산 및 발주 요약")
     st.dataframe(
