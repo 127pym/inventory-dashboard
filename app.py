@@ -59,7 +59,7 @@ with st.expander("⚙️ [설정] 저온 품목(I-01 ~ I-03) 요일별 버퍼 �
 
 weekday_kr = ['월', '화', '수', '목', '금', '토', '일']
 current_weekday = order_date.weekday()
-st.info(f"📅 발주 대상일: **{weekday_kr[current_weekday]}요일** | 누적 기록부가 세로형 데이터 및 합계/평균 통계 형식으로 개선되었습니다.")
+st.info(f"📅 발주 대상일: **{weekday_kr[current_weekday]}요일** | 품목이 세로로, 날짜가 가로로 쌓이는 누적 기록부 시스템 작동 중")
 
 # --- [고정 틀 3: 실시간 데이터 편집기] ---
 st.subheader("📋 재고 및 누적 데이터 입력")
@@ -161,48 +161,51 @@ def highlight_main_items(row):
 styled_df = display_df.style.apply(highlight_main_items, axis=1).hide(subset=["excel_key"], axis=1)
 st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
-# --- [고정 틀 6: 일자별 사용량 누적 기록부 (세로형 변환 + 합계/평균 추가)] ---
+# --- [고정 틀 6: 일자별 사용량 누적 기록부 (품목 세로 + 날짜 가로 확장형 피벗 통계)] ---
 st.markdown("---")
-st.subheader("📈 일자별 품목별 실사용량 누적 기록부 (세로형 통계)")
+st.subheader("📈 일자별 품목별 실사용량 누적 통계표 (품목 세로 / 날짜 가로)")
 
 if os.path.exists(HISTORY_FILE):
     raw_history = pd.read_csv(HISTORY_FILE)
     
     if not raw_history.empty and "날짜" in raw_history.columns:
-        # 날짜순 정렬
-        raw_history = raw_history.sort_values("날짜")
+        # 가로(날짜) 세로(품목) 반전 변환 (Transpose) 처리
+        # 날짜 컬럼을 제외한 품목 코드들만 추출
+        date_col = raw_history["날짜"]
+        item_cols = [c for c in raw_history.columns if c != "날짜"]
         
-        # 합계와 평균 행 추가를 위한 데이터 가공
-        stat_df = raw_history.copy(deep=True)
-        numeric_cols = [c for c in stat_df.columns if c != "날짜"]
+        # 전치(Transpose)하여 품목을 행으로, 날짜를 열로 배치
+        transposed_df = raw_history.set_index("날짜")[item_cols].T.reset_index()
+        transposed_df.rename(columns={"index": "excel_key"}, inplace=True)
         
-        if not stat_df.empty:
-            # 합계 행 계산
-            sum_row = {"날짜": "합계(Sum)"}
-            for col in numeric_cols:
-                sum_row[col] = int(stat_df[col].sum())
-                
-            # 평균 행 계산
-            avg_row = {"날짜": "평균(Average)"}
-            for col in numeric_cols:
-                avg_row[col] = int(round(stat_df[col].mean()))
-                
-            # 데이터프레임에 합계/평균 행 결합
-            stat_df = pd.concat([stat_df, pd.DataFrame([sum_row, avg_row])], ignore_index=True)
+        # 품목명(구분2)을 보기 좋게 매칭하기 위해 원본 품목 리스트 병합
+        meta_df = res[["excel_key", "구분2"]].copy()
+        pivot_view = pd.merge(meta_df, transposed_df, on="excel_key", how="left").fillna(0)
+        
+        # 날짜 컬럼들만 골라서 정수형 변환
+        date_columns_in_pivot = [c for c in pivot_view.columns if c not in ["excel_key", "구분2"]]
+        for col in date_columns_in_pivot:
+            pivot_view[col] = pd.to_numeric(pivot_view[col], errors='coerce').fillna(0).astype(int)
             
-        st.dataframe(stat_df, use_container_width=True, hide_index=True)
+        # 오른쪽에 합계(Sum)와 평균(Average) 컬럼 추가
+        if len(date_columns_in_pivot) > 0:
+            pivot_view["합계(Sum)"] = pivot_view[date_columns_in_pivot].sum(axis=1)
+            pivot_view["평균(Average)"] = pivot_view[date_columns_in_pivot].mean(axis=1).round().astype(int)
         
-        # 삭제 UI
-        with st.expander("🗑️ 잘못 업로드된 날짜 데이터 삭제하기", expanded=False):
-            dates_available = raw_history["날짜"].tolist()
-            target_date_to_delete = st.selectbox("삭제할 날짜 선택", dates_available)
-            
-            if st.button("❌ 선택한 날짜 기록 삭제", type="secondary"):
-                updated_history = raw_history[raw_history["날짜"] != target_date_to_delete]
-                updated_history.to_csv(HISTORY_FILE, index=False)
-                st.success(f"🗑️ [{target_date_to_delete}] 날짜의 데이터가 성공적으로 삭제되었습니다. 페이지를 새로고침합니다.")
-                st.rerun()
+        st.dataframe(pivot_view, use_container_width=True, hide_index=True)
+        
+        # 삭제 UI (잘못 올라간 날짜 지우기)
+        if len(date_columns_in_pivot) > 0:
+            with st.expander("🗑️ 잘못 업로드된 특정 날짜 열(Column) 데이터 삭제하기", expanded=False):
+                target_date_to_delete = st.selectbox("삭제할 날짜 선택", date_columns_in_pivot)
+                
+                if st.button("❌ 선택한 날짜 컬럼 삭제", type="secondary"):
+                    # raw_history에서 해당 날짜 컬럼(행)을 통째로 날림
+                    raw_history = raw_history.drop(columns=[target_date_to_delete], errors="ignore")
+                    raw_history.to_csv(HISTORY_FILE, index=False)
+                    st.success(f"🗑️ [{target_date_to_delete}] 날짜 데이터가 성공적으로 삭제되었습니다.")
+                    st.rerun()
     else:
         st.info("ℹ️ 기록된 데이터가 없습니다.")
 else:
-    st.info("ℹ️ 파일을 업로드하고 [저장] 버튼을 누르면 날짜별 사용량 기록이 세로형으로 차곡차곡 쌓입니다.")
+    st.info("ℹ️ 파일을 업로드하고 [저장] 버튼을 누르면 품목이 세로로, 날짜가 가로로 쌓이는 통계표가 만들어집니다.")
