@@ -57,13 +57,13 @@ with st.expander("⚙️ [설정] 저온 품목(I-01 ~ I-03) 요일별 버퍼 �
 
 weekday_kr = ['월', '화', '수', '목', '금', '토', '일']
 current_weekday = order_date.weekday()
-st.info(f"📅 발주 대상일: **{weekday_kr[current_weekday]}요일** | 요약 표가 항시 출력되며, 사용량 기록이 자동으로 누적됩니다.")
+st.info(f"📅 발주 대상일: **{weekday_kr[current_weekday]}요일** | 모든 요약 및 누적 기록 표가 항시 출력됩니다.")
 
 # --- [고정 틀 3: 실시간 데이터 편집기] ---
 st.subheader("📋 재고 및 누적 데이터 입력")
 edited_df = st.data_editor(st.session_state.stock_data, num_rows="fixed", use_container_width=True, hide_index=True)
 
-# --- [계통 계산 로직 (실시간 자동 연산)] ---
+# --- [계산 로직 (실시간 자동 연산)] ---
 res = edited_df.copy()
 
 numeric_cols_to_fix = ["전일기말재고", "당일입고량", "입고예정량", "전일실사용량", "누적평균사용량"]
@@ -83,7 +83,6 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"❌ 파일 분석 실패: {e}")
 
-# 누적 평균 계산 및 사용량 히스토리 기록용 데이터 준비
 today_str = order_date.strftime("%Y-%m-%d")
 history_row = {"날짜": today_str}
 
@@ -126,21 +125,19 @@ for col in int_columns:
     if col in res.columns:
         res[col] = res[col].astype(int)
 
-# --- [고정 틀 4: 저장 버튼 (데이터 백업 및 사용량 히스토리 누적 기록)] ---
+# --- [고정 틀 4: 저장 버튼 (데이터 영구 저장 및 사용량 히스토리 백업)] ---
 if st.button("💾 입력한 데이터 및 상태 저장", type="primary", use_container_width=True):
     st.session_state.stock_data = res
     res.to_csv(DATA_FILE, index=False)
     
-    # 사용량 히스토리 CSV 누적 저장 처리
     history_df = pd.DataFrame([history_row])
     if os.path.exists(HISTORY_FILE):
         existing_history = pd.read_csv(HISTORY_FILE)
-        # 같은 날짜 데이터가 있으면 덮어쓰고, 없으면 추가
         existing_history = existing_history[existing_history["날짜"] != today_str]
         history_df = pd.concat([existing_history, history_df], ignore_index=True)
     
     history_df.to_csv(HISTORY_FILE, index=False)
-    st.success("✅ 현재 데이터가 안전하게 저장되었으며, 일자별 사용량 기록부에 반영되었습니다!")
+    st.success("✅ 현재 데이터가 안전하게 저장되었으며, 일자별 사용량 기록부가 갱신되었습니다!")
 
 # --- [고정 틀 5: 최종 계산 및 발주 요약 표 (항시 출력)] ---
 st.markdown("---")
@@ -157,7 +154,7 @@ def highlight_main_items(row):
 styled_df = display_df.style.apply(highlight_main_items, axis=1).hide(subset=["excel_key"], axis=1)
 st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
-# --- [추가 영역: 일자별 사용량 누적 기록부] ---
+# --- [고정 틀 6: 일자별 사용량 누적 기록부 (항시 출력)] ---
 st.markdown("---")
 st.subheader("📈 일자별 품목별 실사용량 누적 기록부")
 
@@ -165,4 +162,5 @@ if os.path.exists(HISTORY_FILE):
     history_view = pd.read_csv(HISTORY_FILE)
     st.dataframe(history_view, use_container_width=True, hide_index=True)
 else:
-    st.info("ℹ️ 파일을 업로드하고 저장 버튼을 누르면 날짜별 사용량 기록이 여기에 차곡차곡 쌓입니다.")
+    # 파일이 아직 없더라도 빈 안내 대신 기본 뼈대나 안내 문구 출력
+    st.info("ℹ️ 파일을 업로드하고 [저장] 버튼을 누르면 날짜별 사용량 기록이 여기에 실시간으로 쌓입니다.")
