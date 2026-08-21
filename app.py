@@ -20,7 +20,6 @@ if os.path.exists(DATA_FILE):
     st.session_state.stock_data = pd.read_csv(DATA_FILE)
     if "당일입고량" not in st.session_state.stock_data.columns:
         st.session_state.stock_data.insert(4, "당일입고량", 0)
-    # 불필요한 발주필요량 컬럼이 저장소에 남아있다면 강제로 제거
     if "발주필요량" in st.session_state.stock_data.columns:
         st.session_state.stock_data.drop(columns=["발주필요량"], inplace=True)
     if "데이터반영일수" in st.session_state.stock_data.columns:
@@ -60,11 +59,10 @@ with st.expander("⚙️ [설정] 저온 품목(I-01 ~ I-03) 요일별 버퍼 �
 
 weekday_kr = ['월', '화', '수', '목', '금', '토', '일']
 current_weekday = order_date.weekday()
-st.info(f"📅 발주 대상일: **{weekday_kr[current_weekday]}요일** | 입력창에서는 발주필요량이 제거되어 오직 재고/입고 입력에만 집중할 수 있습니다.")
+st.info(f"📅 발주 대상일: **{weekday_kr[current_weekday]}요일** | 누적 기록부가 세로형 데이터 및 합계/평균 통계 형식으로 개선되었습니다.")
 
-# --- [고정 틀 3: 실시간 데이터 편집기 (발주필요량 제거됨)] ---
+# --- [고정 틀 3: 실시간 데이터 편집기] ---
 st.subheader("📋 재고 및 누적 데이터 입력")
-# 에디터에 보여줄 때 혹시 모를 발주필요량 컬럼 원천 차단
 editor_view_df = st.session_state.stock_data.copy()
 if "발주필요량" in editor_view_df.columns:
     editor_view_df.drop(columns=["발주필요량"], inplace=True)
@@ -135,7 +133,6 @@ for col in int_columns:
 
 # --- [고정 틀 4: 저장 버튼] ---
 if st.button("💾 입력한 데이터 및 상태 저장", type="primary", use_container_width=True):
-    # 저장할 때는 발주필요량을 뺀 순수 입력 데이터만 stock_data에 반영
     save_target = res.drop(columns=["발주필요량"], errors="ignore")
     st.session_state.stock_data = save_target
     save_target.to_csv(DATA_FILE, index=False)
@@ -164,23 +161,48 @@ def highlight_main_items(row):
 styled_df = display_df.style.apply(highlight_main_items, axis=1).hide(subset=["excel_key"], axis=1)
 st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
-# --- [고정 틀 6: 일자별 사용량 누적 기록부 및 삭제 기능] ---
+# --- [고정 틀 6: 일자별 사용량 누적 기록부 (세로형 변환 + 합계/평균 추가)] ---
 st.markdown("---")
-st.subheader("📈 일자별 품목별 실사용량 누적 기록부")
+st.subheader("📈 일자별 품목별 실사용량 누적 기록부 (세로형 통계)")
 
 if os.path.exists(HISTORY_FILE):
-    history_view = pd.read_csv(HISTORY_FILE)
-    st.dataframe(history_view, use_container_width=True, hide_index=True)
+    raw_history = pd.read_csv(HISTORY_FILE)
     
-    if not history_view.empty:
+    if not raw_history.empty and "날짜" in raw_history.columns:
+        # 날짜순 정렬
+        raw_history = raw_history.sort_values("날짜")
+        
+        # 합계와 평균 행 추가를 위한 데이터 가공
+        stat_df = raw_history.copy(deep=True)
+        numeric_cols = [c for c in stat_df.columns if c != "날짜"]
+        
+        if not stat_df.empty:
+            # 합계 행 계산
+            sum_row = {"날짜": "합계(Sum)"}
+            for col in numeric_cols:
+                sum_row[col] = int(stat_df[col].sum())
+                
+            # 평균 행 계산
+            avg_row = {"날짜": "평균(Average)"}
+            for col in numeric_cols:
+                avg_row[col] = int(round(stat_df[col].mean()))
+                
+            # 데이터프레임에 합계/평균 행 결합
+            stat_df = pd.concat([stat_df, pd.DataFrame([sum_row, avg_row])], ignore_index=True)
+            
+        st.dataframe(stat_df, use_container_width=True, hide_index=True)
+        
+        # 삭제 UI
         with st.expander("🗑️ 잘못 업로드된 날짜 데이터 삭제하기", expanded=False):
-            dates_available = history_view["날짜"].tolist()
+            dates_available = raw_history["날짜"].tolist()
             target_date_to_delete = st.selectbox("삭제할 날짜 선택", dates_available)
             
             if st.button("❌ 선택한 날짜 기록 삭제", type="secondary"):
-                updated_history = history_view[history_view["날짜"] != target_date_to_delete]
+                updated_history = raw_history[raw_history["날짜"] != target_date_to_delete]
                 updated_history.to_csv(HISTORY_FILE, index=False)
                 st.success(f"🗑️ [{target_date_to_delete}] 날짜의 데이터가 성공적으로 삭제되었습니다. 페이지를 새로고침합니다.")
                 st.rerun()
+    else:
+        st.info("ℹ️ 기록된 데이터가 없습니다.")
 else:
-    st.info("ℹ️ 파일을 업로드하고 [저장] 버튼을 누르면 날짜별 사용량 기록이 여기에 실시간으로 쌓입니다.")
+    st.info("ℹ️ 파일을 업로드하고 [저장] 버튼을 누르면 날짜별 사용량 기록이 세로형으로 차곡차곡 쌓입니다.")
