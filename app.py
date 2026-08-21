@@ -20,6 +20,9 @@ if os.path.exists(DATA_FILE):
     st.session_state.stock_data = pd.read_csv(DATA_FILE)
     if "당일입고량" not in st.session_state.stock_data.columns:
         st.session_state.stock_data.insert(4, "당일입고량", 0)
+    # 불필요한 발주필요량 컬럼이 저장소에 남아있다면 강제로 제거
+    if "발주필요량" in st.session_state.stock_data.columns:
+        st.session_state.stock_data.drop(columns=["발주필요량"], inplace=True)
     if "데이터반영일수" in st.session_state.stock_data.columns:
         st.session_state.stock_data.drop(columns=["데이터반영일수"], inplace=True)
 else:
@@ -57,11 +60,16 @@ with st.expander("⚙️ [설정] 저온 품목(I-01 ~ I-03) 요일별 버퍼 �
 
 weekday_kr = ['월', '화', '수', '목', '금', '토', '일']
 current_weekday = order_date.weekday()
-st.info(f"📅 발주 대상일: **{weekday_kr[current_weekday]}요일** | 잘못 업로드된 날짜 기록은 하단에서 쉽게 삭제할 수 있습니다.")
+st.info(f"📅 발주 대상일: **{weekday_kr[current_weekday]}요일** | 입력창에서는 발주필요량이 제거되어 오직 재고/입고 입력에만 집중할 수 있습니다.")
 
-# --- [고정 틀 3: 실시간 데이터 편집기] ---
+# --- [고정 틀 3: 실시간 데이터 편집기 (발주필요량 제거됨)] ---
 st.subheader("📋 재고 및 누적 데이터 입력")
-edited_df = st.data_editor(st.session_state.stock_data, num_rows="fixed", use_container_width=True, hide_index=True)
+# 에디터에 보여줄 때 혹시 모를 발주필요량 컬럼 원천 차단
+editor_view_df = st.session_state.stock_data.copy()
+if "발주필요량" in editor_view_df.columns:
+    editor_view_df.drop(columns=["발주필요량"], inplace=True)
+
+edited_df = st.data_editor(editor_view_df, num_rows="fixed", use_container_width=True, hide_index=True)
 
 # --- [계산 로직 (실시간 자동 연산)] ---
 res = edited_df.copy()
@@ -127,8 +135,10 @@ for col in int_columns:
 
 # --- [고정 틀 4: 저장 버튼] ---
 if st.button("💾 입력한 데이터 및 상태 저장", type="primary", use_container_width=True):
-    st.session_state.stock_data = res
-    res.to_csv(DATA_FILE, index=False)
+    # 저장할 때는 발주필요량을 뺀 순수 입력 데이터만 stock_data에 반영
+    save_target = res.drop(columns=["발주필요량"], errors="ignore")
+    st.session_state.stock_data = save_target
+    save_target.to_csv(DATA_FILE, index=False)
     
     history_df = pd.DataFrame([history_row])
     if os.path.exists(HISTORY_FILE):
@@ -162,14 +172,12 @@ if os.path.exists(HISTORY_FILE):
     history_view = pd.read_csv(HISTORY_FILE)
     st.dataframe(history_view, use_container_width=True, hide_index=True)
     
-    # [추가]: 잘못 업로드된 날짜 데이터 간편 삭제 UI
     if not history_view.empty:
         with st.expander("🗑️ 잘못 업로드된 날짜 데이터 삭제하기", expanded=False):
             dates_available = history_view["날짜"].tolist()
             target_date_to_delete = st.selectbox("삭제할 날짜 선택", dates_available)
             
             if st.button("❌ 선택한 날짜 기록 삭제", type="secondary"):
-                # 선택한 날짜를 제외하고 다시 저장
                 updated_history = history_view[history_view["날짜"] != target_date_to_delete]
                 updated_history.to_csv(HISTORY_FILE, index=False)
                 st.success(f"🗑️ [{target_date_to_delete}] 날짜의 데이터가 성공적으로 삭제되었습니다. 페이지를 새로고침합니다.")
