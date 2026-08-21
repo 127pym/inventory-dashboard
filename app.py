@@ -39,7 +39,7 @@ if "calculated_result" not in st.session_state:
 
 st.title("📦 물류 재고 및 발주 통합 대시보드")
 
-# --- [고정 틀 2: 날짜 및 파일 업로드 + [추가] 요일별 저온 품목 버퍼 설정 UI] ---
+# --- [고정 틀 2: 날짜 및 파일 업로드 + 설정 UI] ---
 today = datetime.date(2026, 8, 19)
 
 col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
@@ -48,7 +48,6 @@ with col2: delivery_date = st.date_input("입고 예정일", today + datetime.ti
 with col3: avg_days = st.number_input("평균 산출 기간(일)", 1, 30, 10)
 with col4: uploaded_file = st.file_uploader("출고일마감 파일 업로드", type=["xlsx", "xls"])
 
-# [추가]: 점장님이 직접 화면에서 조정할 수 있는 요일별 버퍼 설정 영역
 with st.expander("⚙️ [설정] 저온 품목(I-01 ~ I-03) 요일별 버퍼 마진율 조절", expanded=False):
     b_col1, b_col2, b_col3 = st.columns(3)
     with b_col1:
@@ -60,17 +59,23 @@ with st.expander("⚙️ [설정] 저온 품목(I-01 ~ I-03) 요일별 버퍼 �
 
 weekday_kr = ['월', '화', '수', '목', '금', '토', '일']
 current_weekday = order_date.weekday()
-st.info(f"📅 발주 대상일: **{weekday_kr[current_weekday]}요일** | 저온 품목 버퍼를 설정창에서 직접 제어할 수 있습니다.")
+st.info(f"📅 발주 대상일: **{weekday_kr[current_weekday]}요일** | 타입 에러 방지 안전장치가 적용된 버전입니다.")
 
 # --- [고정 틀 3: 실시간 데이터 편집기] ---
-st.subheader("📋 재고 및 누적 데이터 입력 (당일입고량 키인 가능)")
+st.subheader("📋 재고 및 누적 데이터 입력")
 edited_df = st.data_editor(st.session_state.stock_data, num_rows="fixed", use_container_width=True, hide_index=True)
 
 # --- [고정 틀 4: 계산 실행 버튼] ---
 if st.button("🚀 계산 실행 및 데이터 저장", type="primary", use_container_width=True):
-    with st.spinner("⚙️ 데이터 분석 및 최적화 계산 중..."):
+    with st.spinner("⚙️ 데이터 분석 및 계산 중..."):
         res = edited_df.copy()
         
+        # [안전장치]: 입력된 숫자 컬럼들의 결측치(NaN)나 빈칸을 0으로 채우고 정수형으로 변환
+        numeric_cols_to_fix = ["전일기말재고", "당일입고량", "입고예정량", "전일실사용량", "누적평균사용량"]
+        for col in numeric_cols_to_fix:
+            if col in res.columns:
+                res[col] = pd.to_numeric(res[col], errors='coerce').fillna(0).astype(int)
+
         file_usages = {}
         if uploaded_file is not None:
             try:
@@ -79,11 +84,11 @@ if st.button("🚀 계산 실행 및 데이터 저장", type="primary", use_cont
                 if '운송장번호(박스기준)' in df.columns and '박스호수(실제)' in df.columns:
                     pivot = df.drop_duplicates(subset=['운송장번호(박스기준)'])['박스호수(실제)'].value_counts()
                     for idx, row in res.iterrows():
-                        file_usages[row["excel_key"]] = pivot.get(row["excel_key"], 0)
+                        file_usages[row["excel_key"]] = int(pivot.get(row["excel_key"], 0))
             except Exception as e:
                 st.error(f"❌ 파일 분석 실패: {e}")
         
-        # 누적 평균 정수형 계산
+        # 누적 평균 계산
         for idx, row in res.iterrows():
             key = row["excel_key"]
             today_use = file_usages.get(key, row["전일실사용량"])
@@ -101,28 +106,28 @@ if st.button("🚀 계산 실행 및 데이터 저장", type="primary", use_cont
         # 리드타임 산출
         lead_time = max(0, (delivery_date - order_date).days) + 1
         
-        # [수정]: 점장님이 위에서 설정한 UI 값을 실시간으로 반영하는 동적 마진 함수
         def get_dynamic_margin(excel_key, weekday):
             if excel_key in ["I-01", "I-02", "I-03"]:
-                if weekday in [3, 4]: return margin_thu_fri  # 목, 금 설정값 연동
-                elif weekday == 0:     return margin_mon       # 월요일 설정값 연동
-                else:                  return margin_other     # 기타 요일 설정값 연동
+                if weekday in [3, 4]: return margin_thu_fri 
+                elif weekday == 0:     return margin_mon       
+                else:                  return margin_other     
             return 1.0
 
         safety_stocks = []
         for idx, row in res.iterrows():
             margin = get_dynamic_margin(row["excel_key"], current_weekday)
-            base_safety = row["누적평균사용량"] * lead_time
+            base_safety = float(row["누적평균사용량"]) * lead_time
             safety_stocks.append(int(round(base_safety * margin)))
             
         res["안전재고"] = safety_stocks
         
-        # 기초재고소계
+        # 기초재고소계: 전일기말재고 + 당일입고량 - 전일실사용량 + 입고예정량
         res["기초재고소계"] = res["전일기말재고"] + res["당일입고량"] - res["전일실사용량"] + res["입고예정량"]
         
         res["예상잔여재고"] = res["기초재고소계"] - res["안전재고"]
-        res["발주필요량"] = res.apply(lambda x: max(0, int(x["안전재고"] - x["기초재고소계"])), axis=1)
+        res["발주필요량"] = res.apply(lambda x: max(0, int(x["안전재고"]) - int(x["기초재고소계"])), axis=1)
         
+        # 최종 정수형 고정
         int_columns = ["입수(PLT)", "전일기말재고", "당일입고량", "입고예정량", "전일실사용량", "누적평균사용량", "안전재고", "기초재고소계", "예상잔여재고", "발주필요량"]
         for col in int_columns:
             if col in res.columns:
@@ -132,7 +137,7 @@ if st.button("🚀 계산 실행 및 데이터 저장", type="primary", use_cont
         res.to_csv(DATA_FILE, index=False)
         
         st.session_state.calculated_result = res
-        st.success("✅ 설정하신 요일별 버퍼가 반영되어 계산 완료되었습니다!")
+        st.success("✅ 계산이 성공적으로 완료되었습니다!")
 
 # --- [고정 틀 5: 계산 결과 고정 영역] ---
 st.markdown("---")
