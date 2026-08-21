@@ -25,17 +25,19 @@ if "stock_data" not in st.session_state:
 
 if "calculated_result" not in st.session_state: st.session_state.calculated_result = None
 
-st.title("📦 물류 재고 및 발주 통합 대시보드")
+st.title("📦 물류 재고 및 발주 통합 대시보드 (저온/상온 분리 버퍼)")
 
-# --- [고정 틀 2: 날짜 및 파일 업로드 + 안전재고 마진율 설정 추가] ---
+# --- [고정 틀 2: 날짜 및 파일 업로드] ---
 today = datetime.date(2026, 8, 19)
-col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 2])
+col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
 with col1: order_date = st.date_input("발주 대상일", today)
 with col2: delivery_date = st.date_input("입고 예정일", today + datetime.timedelta(days=6))
 with col3: avg_days = st.number_input("평균 산출 기간(일)", 1, 30, 10)
-# 점장님 요청 반영: 안전재고 대비 여유 마진율 (예: 1.1배 = 110%, 1.2배 = 120% 이하면 미리 발주)
-with col4: safety_margin = st.number_input("안전재고 마진율", 1.0, 1.5, 1.1, step=0.05, help="1.1 = 안전재고의 110% 수준일 때 미리 발주 추천")
-with col5: uploaded_file = st.file_uploader("출고일마감 파일 업로드", type=["xlsx", "xls"])
+with col4: uploaded_file = st.file_uploader("출고일마감 파일 업로드", type=["xlsx", "xls"])
+
+weekday_kr = ['월', '화', '수', '목', '금', '토', '일']
+current_weekday = order_date.weekday()
+st.info(f"📅 선택하신 발주 대상일은 **{weekday_kr[current_weekday]}요일**입니다. (저온 주력 품목 I-01~I-03에만 요일별 버퍼가 적용됩니다)")
 
 # --- [고정 틀 3: 실시간 데이터 편집기] ---
 st.subheader("📋 재고 및 입고량 입력 (엑셀 복사/붙여넣기 가능)")
@@ -43,7 +45,7 @@ edited_df = st.data_editor(st.session_state.stock_data, num_rows="fixed", use_co
 
 # --- [고정 틀 4: 계산 실행 버튼] ---
 if st.button("🚀 계산 실행", type="primary", use_container_width=True):
-    with st.spinner("⚙️ 파일 분석 및 계산 중..."):
+    with st.spinner("⚙️ 데이터 분석 및 계산 중..."):
         res = edited_df.copy()
         
         # 파일 업로드 처리
@@ -63,13 +65,33 @@ if st.button("🚀 계산 실행", type="primary", use_container_width=True):
         # 리드타임 (발주 대상일 포함)
         lead_time = max(0, (delivery_date - order_date).days) + 1
         
-        # 기본 안전재고 * 마진율 적용 (예: 110% 또는 120%)
-        res["안전재고"] = (res["평균사용량"] * lead_time) * safety_margin
+        # [핵심 로직 수정]: I-01 ~ I-03에만 요일별 버퍼 적용, 나머지는 기본 1.0
+        def get_dynamic_margin(excel_key, weekday):
+            # 저온 주력 박스 (I-01, I-02, I-03)에만 주말 대비 버퍼 적용
+            if excel_key in ["I-01", "I-02", "I-03"]:
+                if weekday in [3, 4]:  # 목, 금 발주 (주말 대비) -> 1.25배
+                    return 1.25
+                elif weekday == 0:     # 월 발주 (주말 여파) -> 1.15배
+                    return 1.15
+                else:
+                    return 1.10        # 기타 평일
+            
+            # 스타 박스(상온) 및 기타 품목은 주말 감소 성향을 고려해 버퍼 없이 정석(1.0)으로 운영
+            return 1.0
+
+        # 안전재고 계산
+        safety_stocks = []
+        for idx, row in res.iterrows():
+            margin = get_dynamic_margin(row["excel_key"], current_weekday)
+            base_safety = row["평균사용량"] * lead_time
+            safety_stocks.append(base_safety * margin)
+            
+        res["안전재고"] = safety_stocks
         
         # 기초재고소계
         res["기초재고소계"] = res["전일기말재고"] - res["전일실사용량"] + res["입고예정량"]
         
-        # 예상 재고 잔여량 (기초재고소계 - 안전재고)
+        # 예상 재고 잔여량
         res["예상잔여재고"] = res["기초재고소계"] - res["안전재고"]
         
         # 발주필요량
@@ -77,14 +99,14 @@ if st.button("🚀 계산 실행", type="primary", use_container_width=True):
         
         st.session_state.calculated_result = res
 
-# --- [고정 틀 5: 계산 결과 고정 영역 (주력 박스 연한 노란색 음영 스타일링 적용)] ---
+# --- [고정 틀 5: 계산 결과 고정 영역] ---
 st.markdown("---")
 st.subheader("📊 최종 계산 및 발주 요약")
 
 if st.session_state.calculated_result is not None:
     display_df = st.session_state.calculated_result[["excel_key", "구분2", "입수(PLT)", "전일실사용량", "평균사용량", "안전재고", "기초재고소계", "예상잔여재고", "발주필요량"]]
 
-    # 주력 박스로 지정할 excel_key 리스트 (I-01, I-02, I-03, 스타 4호(C-04), 5호(C-05), 6호(C-06))
+    # 음영 표시 대상 (스타 4, 5, 6호 포함하여 보기 편하게 유지)
     main_items = ["I-01", "I-02", "I-03", "C-04", "C-05", "C-06"]
 
     def highlight_main_items(row):
