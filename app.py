@@ -57,7 +57,7 @@ with st.expander("⚙️ [설정] 저온 품목(I-01 ~ I-03) 요일별 버퍼 �
 
 weekday_kr = ['월', '화', '수', '목', '금', '토', '일']
 current_weekday = order_date.weekday()
-st.info(f"📅 발주 대상일: **{weekday_kr[current_weekday]}요일** | 모든 요약 및 누적 기록 표가 항시 출력됩니다.")
+st.info(f"📅 발주 대상일: **{weekday_kr[current_weekday]}요일** | 잘못 업로드된 날짜 기록은 하단에서 쉽게 삭제할 수 있습니다.")
 
 # --- [고정 틀 3: 실시간 데이터 편집기] ---
 st.subheader("📋 재고 및 누적 데이터 입력")
@@ -125,7 +125,7 @@ for col in int_columns:
     if col in res.columns:
         res[col] = res[col].astype(int)
 
-# --- [고정 틀 4: 저장 버튼 (데이터 영구 저장 및 사용량 히스토리 백업)] ---
+# --- [고정 틀 4: 저장 버튼] ---
 if st.button("💾 입력한 데이터 및 상태 저장", type="primary", use_container_width=True):
     st.session_state.stock_data = res
     res.to_csv(DATA_FILE, index=False)
@@ -139,7 +139,7 @@ if st.button("💾 입력한 데이터 및 상태 저장", type="primary", use_c
     history_df.to_csv(HISTORY_FILE, index=False)
     st.success("✅ 현재 데이터가 안전하게 저장되었으며, 일자별 사용량 기록부가 갱신되었습니다!")
 
-# --- [고정 틀 5: 최종 계산 및 발주 요약 표 (항시 출력)] ---
+# --- [고정 틀 5: 최종 계산 및 발주 요약 표] ---
 st.markdown("---")
 st.subheader("📊 최종 계산 및 발주 요약")
 
@@ -154,13 +154,25 @@ def highlight_main_items(row):
 styled_df = display_df.style.apply(highlight_main_items, axis=1).hide(subset=["excel_key"], axis=1)
 st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
-# --- [고정 틀 6: 일자별 사용량 누적 기록부 (항시 출력)] ---
+# --- [고정 틀 6: 일자별 사용량 누적 기록부 및 삭제 기능] ---
 st.markdown("---")
 st.subheader("📈 일자별 품목별 실사용량 누적 기록부")
 
 if os.path.exists(HISTORY_FILE):
     history_view = pd.read_csv(HISTORY_FILE)
     st.dataframe(history_view, use_container_width=True, hide_index=True)
+    
+    # [추가]: 잘못 업로드된 날짜 데이터 간편 삭제 UI
+    if not history_view.empty:
+        with st.expander("🗑️ 잘못 업로드된 날짜 데이터 삭제하기", expanded=False):
+            dates_available = history_view["날짜"].tolist()
+            target_date_to_delete = st.selectbox("삭제할 날짜 선택", dates_available)
+            
+            if st.button("❌ 선택한 날짜 기록 삭제", type="secondary"):
+                # 선택한 날짜를 제외하고 다시 저장
+                updated_history = history_view[history_view["날짜"] != target_date_to_delete]
+                updated_history.to_csv(HISTORY_FILE, index=False)
+                st.success(f"🗑️ [{target_date_to_delete}] 날짜의 데이터가 성공적으로 삭제되었습니다. 페이지를 새로고침합니다.")
+                st.rerun()
 else:
-    # 파일이 아직 없더라도 빈 안내 대신 기본 뼈대나 안내 문구 출력
     st.info("ℹ️ 파일을 업로드하고 [저장] 버튼을 누르면 날짜별 사용량 기록이 여기에 실시간으로 쌓입니다.")
